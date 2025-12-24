@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasUserDoc() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() { return userDoc().role; }
+    function gymId() { return userDoc().gymId; }
+
+    function isSuperAdmin() { return hasUserDoc() && role() == "SUPER_ADMIN"; }
+    function isGymAdmin() { return hasUserDoc() && (role() == "GYM_ADMIN" || role() == "SUPER_ADMIN"); }
+    function isStaff() { return hasUserDoc() && (role() == "STAFF" || role() == "GYM_ADMIN" || role() == "SUPER_ADMIN"); }
+
+    function sameGym(data) { return hasUserDoc() && data.gymId == gymId(); }
+    function sameGymExisting() { return hasUserDoc() && resource.data.gymId == gymId(); }
+
+    // Slug mapping: only server (admin) should write; clients can read
+    match /slugs/{slug} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /gyms/{id} {
+      allow read: if isSignedIn() && hasUserDoc() && id == gymId();
+      allow create: if false; // via Cloud Function
+      allow update: if isGymAdmin() && id == gymId();
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      // Users can read their own doc
+      allow read: if isSignedIn() && uid == request.auth.uid;
+
+      // Gym admins/staff can read users in same gym
+      allow read: if isStaff() && resource.data.gymId == gymId();
+
+      // Create/update user docs should be server-driven (functions)
+      allow create: if false;
+
+      // Member can update limited self fields
+      allow update: if isSignedIn() && uid == request.auth.uid
+        && sameGymExisting()
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.gymId == resource.data.gymId;
+
+      // Gym admin can update users in same gym
+      allow update: if isGymAdmin() && sameGymExisting();
+
+      allow delete: if false;
+    }
+
+    match /plans/{id} {
+      allow read: if isSignedIn() && sameGymExisting();
+      allow create, update, delete: if isGymAdmin() && sameGym(request.resource.data);
+    }
+
+    match /subscriptions/{id} {
+      // Member reads own subs
+      allow read: if isSignedIn()
+        && sameGymExisting()
+        && resource.data.userId == request.auth.uid;
+
+      // Staff/admin reads all subs in gym
+      allow read: if isStaff() && sameGymExisting();
+
+      // Only admin/staff can create/update
+      allow create, update: if isStaff() && sameGym(request.resource.data);
+      allow delete: if isGymAdmin() && sameGymExisting();
+    }
+
+    match /products/{id} {
+      allow read: if isSignedIn() && sameGymExisting();
+      allow create, update, delete: if isGymAdmin() && sameGym(request.resource.data);
+    }
+
+    match /orders/{id} {
+      // Member sees own
+      allow read: if isSignedIn()
+        && sameGymExisting()
+        && resource.data.userId == request.auth.uid;
+
+      // Staff/admin sees all
+      allow read: if isStaff() && sameGymExisting();
+
+      // Member creates own pending orders
+      allow create: if isSignedIn()
+        && hasUserDoc()
+        && request.resource.data.gymId == gymId()
+        && request.resource.data.userId == request.auth.uid;
+
+      // Updates should be server/payment-webhook later
+      allow update, delete: if false;
+    }
+
+    match /smsLogs/{id} {
+      allow read: if isStaff() && sameGymExisting();
+      allow write: if false; // server only
+    }
+  }
+}
