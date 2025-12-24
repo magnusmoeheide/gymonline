@@ -5,11 +5,10 @@ import { db } from "../firebase/db";
 import { getGymSlug } from "../app/utils/getGymSlug";
 
 export default function useGymSlug() {
-  // compute once per hook instance
   const slug = useMemo(() => getGymSlug(), []);
 
   const [gymId, setGymId] = useState(null);
-  const [loading, setLoading] = useState(Boolean(slug));
+  const [loading, setLoading] = useState(true);
   const [exists, setExists] = useState(false);
   const [error, setError] = useState(null);
 
@@ -17,19 +16,17 @@ export default function useGymSlug() {
     let alive = true;
 
     async function run() {
-      // if no slug (localhost), treat as "ok" and don't fetch
+      setLoading(true);
+      setError(null);
+
+      // no slug => allow app to load, but mark "no gym selected"
       if (!slug) {
         if (!alive) return;
         setGymId(null);
-        setExists(true); // important: avoid login/guards redirect loops
+        setExists(true); // don't block login page with "not registered"
         setLoading(false);
-        setError(null);
         return;
       }
-
-      // prevent re-setting loading on every strict-mode double mount
-      setLoading((v) => (v ? v : true));
-      setError(null);
 
       try {
         const snap = await getDoc(doc(db, "slugs", slug));
@@ -42,8 +39,7 @@ export default function useGymSlug() {
           return;
         }
 
-        const id = snap.data()?.gymId || null;
-        setGymId(id);
+        setGymId(snap.data()?.gymId || null);
         setExists(true);
         setLoading(false);
       } catch (e) {
