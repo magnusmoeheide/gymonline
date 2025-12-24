@@ -1,46 +1,41 @@
 // src/app/utils/getGymSlug.js
-// Supports:
-//  - powergym.gymonline-e07ca.web.app  -> "powergym"
-//  - powergym.yourdomain.com           -> "powergym"
-//  - gymonline-e07ca.web.app           -> null (no gym selected)
-//  - localhost                         -> null
+// Desired behavior:
+// - localhost / 127.*                   => null
+// - gymonline-e07ca.web.app             => null   (treat like root)
+// - powergym.gymonline-e07ca.web.app    => "powergym"
+// - gymonline.com                       => null   (root)
+// - powergym.gymonline.com              => "powergym"
 export function getGymSlug() {
   const host = window.location.hostname.toLowerCase();
 
-  // localhost / ip
-  if (
+  const isLocal =
     host === "localhost" ||
     host === "127.0.0.1" ||
     host === "0.0.0.0" ||
-    /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
-  ) {
-    return null;
-  }
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+
+  if (isLocal) return null;
 
   const isFirebaseDefault =
     host.endsWith(".web.app") || host.endsWith(".firebaseapp.com");
 
-  // -------- Firebase default domain handling --------
-  // <site>.web.app -> no gym slug (just the "root" app)
   if (isFirebaseDefault) {
-    const labels = host.split("."); // ["powergym","gymonline-e07ca","web","app"]
+    const labels = host.split("."); // ["powergym","gymonline-e07ca","web","app"] or ["gymonline-e07ca","web","app"]
 
-    // must be: <slug>.<site>.web.app  (at least 4 labels)
-    if (labels.length >= 4) {
-      // slug is the label right before the firebase site id
-      // powergym.gymonline-e07ca.web.app -> labels[0]
-      return labels[0] || null;
-    }
+    // root: <site>.web.app  => no slug
+    if (labels.length === 3) return null;
 
-    // gymonline-e07ca.web.app -> no subdomain slug
+    // subdomain: <slug>.<site>.web.app => slug is labels[0]
+    if (labels.length >= 4) return labels[0] || null;
+
     return null;
   }
 
-  // -------- Custom domain handling --------
-  // powergym.gymonline.com -> "powergym"
+  // custom domain:
+  // root: gymonline.com => no slug
+  // subdomain: powergym.gymonline.com => slug is first label
   const parts = host.split(".");
-  if (parts.length >= 3) return parts[0];
+  if (parts.length >= 3) return parts[0] || null;
 
-  // apex domain (gymonline.com) -> no gym slug
   return null;
 }

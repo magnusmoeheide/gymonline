@@ -78,6 +78,7 @@ export default function Login() {
     );
   }
 
+  // src/pages/public/Login.jsx  (change the "not registered" check)
   if (slug && !exists) {
     return (
       <div style={{ padding: 24, fontFamily: "system-ui", maxWidth: 520 }}>
