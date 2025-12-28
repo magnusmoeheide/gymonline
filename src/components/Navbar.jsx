@@ -23,15 +23,18 @@ const ADMIN_LINKS = [
   { to: "/admin/settings", label: "Settings" },
 ];
 
+const SUPERADMIN_LINKS = [{ to: "/superadmin", label: "Gyms", end: true }];
+
 function Navbar({ mode = "member" }) {
   const nav = useNavigate();
   const { userDoc, gymName, stopSimulation, isSimulated, realUserDoc } =
     useAuth();
 
-  const links = useMemo(
-    () => (mode === "admin" ? ADMIN_LINKS : MEMBER_LINKS),
-    [mode]
-  );
+  const links = useMemo(() => {
+    if (mode === "superadmin") return SUPERADMIN_LINKS;
+    const base = mode === "admin" ? [...ADMIN_LINKS] : MEMBER_LINKS;
+    return base;
+  }, [mode]);
 
   const handleLogout = useCallback(async () => {
     stopSimulation();
@@ -67,7 +70,7 @@ function Navbar({ mode = "member" }) {
     >
       <div style={{ display: "grid", gap: 6 }}>
         <div style={{ fontWeight: 800, letterSpacing: 0.2 }}>
-          {gymName || "Gym"} Intranet
+          {mode === "superadmin" ? "Super Admin" : gymName || "Gym"} Intranet
         </div>
         <div style={{ fontSize: 12, opacity: 0.65 }}>
           {!isSimulated && <>User: {name}</>}

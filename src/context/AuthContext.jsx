@@ -55,15 +55,64 @@ export function AuthProvider({ children }) {
 
       try {
         // real signed-in user
+        // Guard against reserved / invalid auth UIDs (e.g. "__global__") which
+        // cause Firestore to throw `Resource id "__..." is invalid because it is reserved`.
+        // If we detect a reserved UID, sign the user out and avoid querying Firestore.
+        if (
+          typeof authUser?.uid === "string" &&
+          authUser.uid.startsWith("__")
+        ) {
+          console.error(
+            "AuthContext: reserved auth uid, signing out:",
+            authUser.uid
+          );
+          try {
+            await auth.signOut();
+          } catch (signErr) {
+            console.error("AuthContext: signOut failed:", signErr);
+          }
+          if (!alive) return;
+          setRealUserDoc(null);
+          setUserDoc(null);
+          setGymName(null);
+          setLoading(false);
+          return;
+        }
+
         const realSnap = await getDoc(doc(db, "users", authUser.uid));
         const real = realSnap.exists() ? realSnap.data() : null;
         if (!alive) return;
 
         setRealUserDoc(real);
 
+        // Guard against reserved gymId values in the user doc (e.g. "__global__").
+        // Fetching a doc with such an id causes Firestore to throw a reserved id error.
+        // Allow "__global__" as a special case for super admins (skip gym fetch, set gymName to null).
+        if (
+          typeof real?.gymId === "string" &&
+          real.gymId.startsWith("__") &&
+          real.gymId !== "__global__"
+        ) {
+          console.error(
+            "AuthContext: reserved gymId in user doc, signing out:",
+            real.gymId
+          );
+          try {
+            await auth.signOut();
+          } catch (signErr) {
+            console.error("AuthContext: signOut failed:", signErr);
+          }
+          if (!alive) return;
+          setRealUserDoc(null);
+          setUserDoc(null);
+          setGymName(null);
+          setLoading(false);
+          return;
+        }
+
         // gym name from real user's gym
         let gn = null;
-        if (real?.gymId) {
+        if (real?.gymId && real.gymId !== "__global__") {
           const gymSnap = await getDoc(doc(db, "gyms", real.gymId));
           if (gymSnap.exists()) gn = gymSnap.data()?.name || null;
         }

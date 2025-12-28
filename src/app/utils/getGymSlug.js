@@ -8,6 +8,15 @@
 export function getGymSlug() {
   const host = window.location.hostname.toLowerCase();
 
+  // Allow local subdomains for development (powergym.localhost)
+  // window.location.hostname does not include the port, so "powergym.localhost" is expected.
+  if (host.endsWith(".localhost")) {
+    const labels = host.split(".");
+    // labels like ["powergym","localhost"] -> return "powergym"
+    if (labels.length >= 2 && labels[0] && labels[0] !== "localhost") return labels[0];
+    return null;
+  }
+
   const isLocal =
     host === "localhost" ||
     host === "127.0.0.1" ||

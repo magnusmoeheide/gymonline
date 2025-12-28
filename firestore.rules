@@ -29,7 +29,7 @@ service cloud.firestore {
     }
 
     match /gyms/{id} {
-      allow read: if isSignedIn() && hasUserDoc() && id == gymId();
+      allow read: if isSignedIn() && hasUserDoc() && (id == gymId() || isSuperAdmin());
       allow create: if false; // via Cloud Function
       allow update: if isGymAdmin() && id == gymId();
       allow delete: if false;
@@ -40,7 +40,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && uid == request.auth.uid;
 
       // Gym admins/staff can read users in same gym
-      allow read: if isStaff() && resource.data.gymId == gymId();
+      allow read: if isStaff() && resource.data.gymId == gymId() || isSuperAdmin();
 
       // Create/update user docs should be server-driven (functions)
       allow create: if false;
