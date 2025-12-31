@@ -6,9 +6,9 @@ import NotFound from "../../pages/public/NotFound";
 export default function PublicRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/join" element={<JoinGym />} />
+      <Route index element={<Navigate to="login" replace />} />
+      <Route path="login" element={<Login />} />
+      <Route path="join" element={<JoinGym />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/db";
-import { getGymSlug } from "../app/utils/getGymSlug";
+import { getGymSlug, getGymBasePath } from "../app/utils/getGymSlug";
 
 export default function useGymSlug() {
   const slug = useMemo(() => getGymSlug(), []);
+  const basePath = useMemo(() => getGymBasePath(), []);
 
   const [gymId, setGymId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -19,11 +20,10 @@ export default function useGymSlug() {
       setLoading(true);
       setError(null);
 
-      // no slug => allow app to load, but mark "no gym selected"
       if (!slug) {
         if (!alive) return;
         setGymId(null);
-        setExists(true); // don't block login page with "not registered"
+        setExists(true);
         setLoading(false);
         return;
       }
@@ -57,5 +57,5 @@ export default function useGymSlug() {
     };
   }, [slug]);
 
-  return { slug, gymId, exists, loading, error };
+  return { slug, basePath, gymId, exists, loading, error };
 }

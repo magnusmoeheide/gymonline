@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth } from "../firebase/auth";
 import { db } from "../firebase/db";
@@ -29,16 +29,23 @@ export function AuthProvider({ children }) {
   );
   const [loading, setLoading] = useState(true);
 
-  // 1) Subscribe ONLY to auth changes (no Firestore here)
+  // 1) Auth only
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
-      setAuthUser(u || null);
-    });
+    return onAuthStateChanged(auth, (u) => setAuthUser(u || null));
   }, []);
 
-  // 2) Load Firestore docs when authUser OR simUid changes
+  // 2) Load docs whenever authUser or simUid changes
   useEffect(() => {
     let alive = true;
+
+    async function safeSignOut(reason) {
+      console.error("AuthContext: signing out:", reason);
+      try {
+        await signOut(auth);
+      } catch (e) {
+        console.error("AuthContext: signOut failed:", e);
+      }
+    }
 
     async function run() {
       // signed out
@@ -54,23 +61,9 @@ export function AuthProvider({ children }) {
       setLoading(true);
 
       try {
-        // real signed-in user
-        // Guard against reserved / invalid auth UIDs (e.g. "__global__") which
-        // cause Firestore to throw `Resource id "__..." is invalid because it is reserved`.
-        // If we detect a reserved UID, sign the user out and avoid querying Firestore.
-        if (
-          typeof authUser?.uid === "string" &&
-          authUser.uid.startsWith("__")
-        ) {
-          console.error(
-            "AuthContext: reserved auth uid, signing out:",
-            authUser.uid
-          );
-          try {
-            await auth.signOut();
-          } catch (signErr) {
-            console.error("AuthContext: signOut failed:", signErr);
-          }
+        // Guard reserved auth UIDs
+        if (typeof authUser.uid === "string" && authUser.uid.startsWith("__")) {
+          await safeSignOut(`reserved auth uid: ${authUser.uid}`);
           if (!alive) return;
           setRealUserDoc(null);
           setUserDoc(null);
@@ -79,29 +72,28 @@ export function AuthProvider({ children }) {
           return;
         }
 
+        // Real signed-in user doc
         const realSnap = await getDoc(doc(db, "users", authUser.uid));
         const real = realSnap.exists() ? realSnap.data() : null;
         if (!alive) return;
 
         setRealUserDoc(real);
 
-        // Guard against reserved gymId values in the user doc (e.g. "__global__").
-        // Fetching a doc with such an id causes Firestore to throw a reserved id error.
-        // Allow "__global__" as a special case for super admins (skip gym fetch, set gymName to null).
+        // If no user profile, you can decide to sign out or keep null
+        if (!real) {
+          setUserDoc(null);
+          setGymName(null);
+          setLoading(false);
+          return;
+        }
+
+        // Guard reserved gymId values
         if (
-          typeof real?.gymId === "string" &&
+          typeof real.gymId === "string" &&
           real.gymId.startsWith("__") &&
           real.gymId !== "__global__"
         ) {
-          console.error(
-            "AuthContext: reserved gymId in user doc, signing out:",
-            real.gymId
-          );
-          try {
-            await auth.signOut();
-          } catch (signErr) {
-            console.error("AuthContext: signOut failed:", signErr);
-          }
+          await safeSignOut(`reserved gymId: ${real.gymId}`);
           if (!alive) return;
           setRealUserDoc(null);
           setUserDoc(null);
@@ -110,38 +102,67 @@ export function AuthProvider({ children }) {
           return;
         }
 
-        // gym name from real user's gym
-        let gn = null;
-        if (real?.gymId && real.gymId !== "__global__") {
-          const gymSnap = await getDoc(doc(db, "gyms", real.gymId));
-          if (gymSnap.exists()) gn = gymSnap.data()?.name || null;
-        }
-        if (!alive) return;
-        setGymName(gn);
+        // Can simulate:
+        // - SUPER_ADMIN can simulate anyone
+        // - GYM_ADMIN can simulate (if you want to keep that) -> same as your old behavior
+        const canSimulate =
+          (real.role === "SUPER_ADMIN" || real.role === "GYM_ADMIN") &&
+          !!simUid;
 
-        // simulation
-        const canSimulate = real?.role === "GYM_ADMIN" && !!simUid;
+        // If simUid is set but user can't simulate, clear it
+        if (!!simUid && !canSimulate) {
+          localStorage.removeItem(SIM_KEY);
+          setSimUid("");
+        }
+
+        // Resolve effective doc (real or simulated)
+        let effective = real;
+        let effectiveGymId = real.gymId || null;
 
         if (canSimulate) {
           const simSnap = await getDoc(doc(db, "users", simUid));
           if (!alive) return;
 
           if (simSnap.exists()) {
-            setUserDoc({
-              ...simSnap.data(),
-              __simulated: true,
-              __realAdminUid: authUser.uid,
-            });
-            setLoading(false);
-            return;
-          }
+            const sim = simSnap.data() || {};
 
-          // broken sim uid
-          localStorage.removeItem(SIM_KEY);
-          setSimUid("");
+            // Enforce same-gym simulation for GYM_ADMIN (optional)
+            if (
+              real.role === "GYM_ADMIN" &&
+              sim.gymId &&
+              sim.gymId !== real.gymId
+            ) {
+              localStorage.removeItem(SIM_KEY);
+              setSimUid("");
+            } else {
+              effective = {
+                ...sim,
+                __simulated: true,
+                __realUid: authUser.uid,
+                __realRole: real.role,
+              };
+              effectiveGymId = sim.gymId || null;
+            }
+          } else {
+            // broken sim uid
+            localStorage.removeItem(SIM_KEY);
+            setSimUid("");
+          }
         }
 
-        setUserDoc(real);
+        // Gym name should match the effective user (simulated gym when simulating)
+        let gn = null;
+
+        // superadmin/global can have no gym
+        if (effectiveGymId && effectiveGymId !== "__global__") {
+          const gymSnap = await getDoc(doc(db, "gyms", effectiveGymId));
+          if (gymSnap.exists()) gn = gymSnap.data()?.name || null;
+        }
+
+        if (!alive) return;
+
+        setUserDoc(effective);
+        setGymName(gn);
       } catch (e) {
         console.error("AuthContext load failed:", e);
         if (!alive) return;
@@ -163,12 +184,12 @@ export function AuthProvider({ children }) {
     const v = String(uid || "").trim();
     if (!v) return;
     localStorage.setItem(SIM_KEY, v);
-    setSimUid(v); // <- triggers reload immediately
+    setSimUid(v);
   }, []);
 
   const stopSimulation = useCallback(() => {
     localStorage.removeItem(SIM_KEY);
-    setSimUid(""); // <- triggers reload immediately
+    setSimUid("");
   }, []);
 
   const value = useMemo(

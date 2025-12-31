@@ -16,13 +16,13 @@ export default function AdminRoutes() {
       <RequireRole allow={["SUPER_ADMIN", "GYM_ADMIN", "STAFF"]}>
         <Layout mode="admin">
           <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/members" element={<Members />} />
-            <Route path="/subscriptions" element={<Subscriptions />} />
-            <Route path="/plans" element={<Plans />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route index element={<Overview />} />
+            <Route path="members" element={<Members />} />
+            <Route path="subscriptions" element={<Subscriptions />} />
+            <Route path="plans" element={<Plans />} />
+            <Route path="products" element={<Products />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="settings" element={<Settings />} />
           </Routes>
         </Layout>
       </RequireRole>

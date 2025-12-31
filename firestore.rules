@@ -4,55 +4,77 @@ service cloud.firestore {
 
     function isSignedIn() { return request.auth != null; }
 
-    function userDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function hasUserDoc() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    function hasUserDoc() {
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function role() { return userDoc().role; }
     function gymId() { return userDoc().gymId; }
 
-    function isSuperAdmin() { return hasUserDoc() && role() == "SUPER_ADMIN"; }
-    function isGymAdmin() { return hasUserDoc() && (role() == "GYM_ADMIN" || role() == "SUPER_ADMIN"); }
-    function isStaff() { return hasUserDoc() && (role() == "STAFF" || role() == "GYM_ADMIN" || role() == "SUPER_ADMIN"); }
+    function isSuperAdmin() {
+      return isSignedIn() && hasUserDoc() && role() == "SUPER_ADMIN";
+    }
 
-    function sameGym(data) { return hasUserDoc() && data.gymId == gymId(); }
-    function sameGymExisting() { return hasUserDoc() && resource.data.gymId == gymId(); }
+    function isGymAdmin() {
+      return isSignedIn() && hasUserDoc()
+        && (role() == "GYM_ADMIN" || role() == "SUPER_ADMIN");
+    }
 
-    // Slug mapping: only server (admin) should write; clients can read
+    function isStaff() {
+      return isSignedIn() && hasUserDoc()
+        && (role() == "STAFF" || role() == "GYM_ADMIN" || role() == "SUPER_ADMIN");
+    }
+
+    // ✅ SUPER_ADMIN bypasses sameGym checks (needed for simulation)
+    function sameGym(data) {
+      return isSignedIn() && hasUserDoc()
+        && (isSuperAdmin() || data.gymId == gymId());
+    }
+
+    function sameGymExisting() {
+      return isSignedIn() && hasUserDoc()
+        && (isSuperAdmin() || resource.data.gymId == gymId());
+    }
+
+    // Slug mapping: clients can read; writes are server-only
     match /slugs/{slug} {
       allow read: if true;
       allow write: if false;
     }
 
+    // Public directory for login gym-picker (no auth needed)
+    match /gymsPublic/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Private gyms docs
     match /gyms/{id} {
       allow read: if isSignedIn() && hasUserDoc() && (id == gymId() || isSuperAdmin());
-      allow create: if false; // via Cloud Function
-      allow update: if isGymAdmin() && id == gymId();
+      allow create: if false;
+      allow update: if isGymAdmin() && (isSuperAdmin() || id == gymId());
       allow delete: if false;
     }
 
     match /users/{uid} {
-      // Users can read their own doc
-      allow read: if isSignedIn() && uid == request.auth.uid;
+      allow read: if (isSignedIn() && uid == request.auth.uid)
+        || (isStaff() && resource.data.gymId == gymId())
+        || isSuperAdmin();
 
-      // Gym admins/staff can read users in same gym
-      allow read: if isStaff() && resource.data.gymId == gymId() || isSuperAdmin();
-
-      // Create/update user docs should be server-driven (functions)
       allow create: if false;
 
-      // Member can update limited self fields
-      allow update: if isSignedIn() && uid == request.auth.uid
-        && sameGymExisting()
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.gymId == resource.data.gymId;
-
-      // Gym admin can update users in same gym
-      allow update: if isGymAdmin() && sameGymExisting();
+      allow update: if (
+          isSignedIn()
+          && uid == request.auth.uid
+          && sameGymExisting()
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.gymId == resource.data.gymId
+        ) || (isGymAdmin() && sameGymExisting());
 
       allow delete: if false;
     }
@@ -63,15 +85,13 @@ service cloud.firestore {
     }
 
     match /subscriptions/{id} {
-      // Member reads own subs
       allow read: if isSignedIn()
         && sameGymExisting()
         && resource.data.userId == request.auth.uid;
 
-      // Staff/admin reads all subs in gym
       allow read: if isStaff() && sameGymExisting();
 
-      // Only admin/staff can create/update
+      // ✅ SUPER_ADMIN now passes sameGym(...) via helper
       allow create, update: if isStaff() && sameGym(request.resource.data);
       allow delete: if isGymAdmin() && sameGymExisting();
     }
@@ -82,27 +102,23 @@ service cloud.firestore {
     }
 
     match /orders/{id} {
-      // Member sees own
       allow read: if isSignedIn()
         && sameGymExisting()
         && resource.data.userId == request.auth.uid;
 
-      // Staff/admin sees all
       allow read: if isStaff() && sameGymExisting();
 
-      // Member creates own pending orders
       allow create: if isSignedIn()
         && hasUserDoc()
-        && request.resource.data.gymId == gymId()
+        && (isSuperAdmin() || request.resource.data.gymId == gymId())
         && request.resource.data.userId == request.auth.uid;
 
-      // Updates should be server/payment-webhook later
       allow update, delete: if false;
     }
 
     match /smsLogs/{id} {
       allow read: if isStaff() && sameGymExisting();
-      allow write: if false; // server only
+      allow write: if false;
     }
   }
 }

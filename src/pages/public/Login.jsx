@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+// src/pages/public/Login.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../../firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { getGymSlug } from "../../app/utils/getGymSlug";
 import useGymSlug from "../../hooks/useGymSlug";
+import { getFirestore, collection, getDocs } from "firebase/firestore";
+import { getApp } from "firebase/app";
 
 export default function Login() {
   const nav = useNavigate();
@@ -17,77 +19,106 @@ export default function Login() {
 
   const {
     slug,
+    basePath,
     gymId: slugGymId,
     exists,
     loading: slugLoading,
     error,
   } = useGymSlug();
 
-  const pageStyle = {
-    minHeight: "100vh",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-    background: "linear-gradient(180deg,#f6f9ff 0%,#ffffff 60%)",
-    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
-  };
+  const db = useMemo(() => {
+    const app = getApp();
+    return getFirestore(app, "gymonline-db");
+  }, []);
 
-  const cardStyle = {
-    width: "100%",
-    maxWidth: 420,
-    background: "#ffffff",
-    borderRadius: 12,
-    boxShadow: "0 8px 30px rgba(16,24,40,0.08)",
-    padding: 24,
-    boxSizing: "border-box",
-  };
+  // Gym picker (only when NOT inside /g/<slug>)
+  const [gymsLoading, setGymsLoading] = useState(false);
+  const [gyms, setGyms] = useState([]); // { id, name, slug }
+  const [selectedGymId, setSelectedGymId] = useState("");
 
-  const inputStyle = {
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid #e6e9f0",
-    outline: "none",
-    fontSize: 15,
-    boxSizing: "border-box",
-    width: "100%",
-  };
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const buttonStyle = {
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "none",
-    background: "#2563eb",
-    color: "white",
-    fontWeight: 600,
-    fontSize: 15,
-    cursor: "pointer",
-  };
+  // Load gyms for picker (only when no slug)
+  useEffect(() => {
+    if (slug) return;
 
+    (async () => {
+      setGymsLoading(true);
+      setErr("");
+
+      try {
+        const gymsSnap = await getDocs(collection(db, "gymsPublic"));
+
+        const rows = gymsSnap.docs
+          .map((d) => {
+            const data = d.data() || {};
+            return {
+              id: d.id,
+              name: data?.name || data?.gymName || d.id,
+              slug: data?.slug || data?.subdomain || "",
+            };
+          })
+          .filter((x) => x.slug) // need slug to enter /g/<slug>
+          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+        if (!mountedRef.current) return;
+
+        setGyms(rows);
+        setSelectedGymId((prev) =>
+          prev && rows.some((g) => g.id === prev) ? prev : ""
+        );
+      } catch (e) {
+        if (!mountedRef.current) return;
+        setErr(`Failed to load gyms: ${e?.message || String(e)}`);
+      } finally {
+        if (mountedRef.current) setGymsLoading(false);
+      }
+    })();
+  }, [db, slug]);
+
+  // After login, route inside the tenant basePath
   useEffect(() => {
     if (!userDoc || !realUserDoc) return;
 
-    // Superadmins can log in without subdomain (to access global admin features)
-    if (realUserDoc?.role !== "SUPER_ADMIN") {
-      if (!slug) {
-        // Non-superadmins need a valid subdomain
-        alert("Please access the app via your gym's subdomain.");
-        return;
-      }
-      if (slugGymId && userDoc.gymId !== slugGymId) {
-        alert("You are trying to log into the wrong gym subdomain.");
-        return;
-      }
+    // Superadmin can stay on root pages
+    if (realUserDoc?.role === "SUPER_ADMIN") {
+      nav("/superadmin");
+      return;
     }
 
-    if (realUserDoc?.role === "SUPER_ADMIN") nav("/superadmin");
-    else if (["GYM_ADMIN", "STAFF"].includes(userDoc.role)) nav("/admin");
-    else nav("/app");
-  }, [userDoc, realUserDoc, nav, slug, slugGymId]);
+    // Tenant pages must have a slug (path-based)
+    if (!slug) {
+      setErr(
+        "Open your gym link first (e.g. /g/<slug>) or select a gym below."
+      );
+      return;
+    }
+
+    // Validate slug -> gymId matches user
+    if (slugGymId && userDoc.gymId !== slugGymId) {
+      alert("You are trying to log into the wrong gym.");
+      return;
+    }
+
+    if (["GYM_ADMIN", "STAFF"].includes(userDoc.role)) nav(`${basePath}/admin`);
+    else nav(`${basePath}/app`);
+  }, [userDoc, realUserDoc, nav, slug, slugGymId, basePath]);
 
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+
+    if (!slug) {
+      setErr("Select a gym first (or open /g/<slug>).");
+      return;
+    }
+
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -98,82 +129,114 @@ export default function Login() {
     }
   }
 
-  if (slugLoading) {
-    return (
-      <div style={pageStyle}>
-        <div style={cardStyle}>
-          <h2 style={{ margin: 0 }}>GymOnline</h2>
-          <div style={{ marginTop: 12 }}>Checking gym…</div>
-        </div>
-      </div>
-    );
+  function enterSelectedGym() {
+    const gym = gyms.find((g) => g.id === selectedGymId);
+    if (!gym?.slug) return;
+    window.location.assign(`/g/${gym.slug}/login`);
   }
 
-  if (authLoading) {
-    return (
-      <div style={pageStyle}>
-        <div style={cardStyle}>
-          <h2 style={{ margin: 0 }}>GymOnline</h2>
-          <div style={{ marginTop: 12 }}>Checking authentication…</div>
-        </div>
-      </div>
-    );
-  }
+  const joinHref = slug ? `${basePath}/join` : "/join";
 
-  if (error) {
-    return (
-      <div style={pageStyle}>
-        <div style={cardStyle}>
-          <h2 style={{ margin: 0 }}>GymOnline</h2>
-          <p style={{ color: "crimson", marginTop: 12 }}>
-            Failed to check gym slug: {String(error?.message || error)}
-          </p>
-          <p style={{ opacity: 0.8 }}>
-            Open DevTools → Console for the full error.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // --- UI below unchanged except:
+  // 1) show picker when !slug
+  // 2) add "Enter gym" button that navigates to /g/<slug>/login
 
-  // src/pages/public/Login.jsx  (change the "not registered" check)
-  if (slug && !exists) {
-    return (
-      <div style={pageStyle}>
-        <div style={cardStyle}>
-          <h2 style={{ margin: 0 }}>GymOnline</h2>
-          <p style={{ marginTop: 12 }}>
-            Gym subdomain <b>{slug}</b> is not registered.
-          </p>
-          <p style={{ opacity: 0.8 }}>
-            Create <code>slugs/{slug}</code> → <code>{`{ gymId }`}</code> in
-            Firestore.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
+  // (keep your styles as-is)
+  // ...
   return (
-    <div style={pageStyle}>
-      <div style={cardStyle}>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          background: "#fff",
+          borderRadius: 12,
+          padding: 24,
+          border: "1px solid #eee",
+        }}
+      >
         <h2 style={{ margin: 0 }}>GymOnline</h2>
-        <div style={{ opacity: 0.7, marginTop: 10, marginBottom: 14 }}>
-          {slug ? (
-            <>
-              Gym: <b>{slug}</b>
-            </>
-          ) : (
-            <>Local dev (no subdomain)</>
-          )}
-        </div>
+
+        {!slug ? (
+          <div
+            style={{ marginTop: 12, marginBottom: 14, display: "grid", gap: 8 }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.85 }}>
+              Enter gym
+            </div>
+
+            <select
+              value={selectedGymId}
+              onChange={(e) => setSelectedGymId(e.target.value)}
+              disabled={gymsLoading}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid #e6e9f0",
+              }}
+            >
+              <option value="">
+                {gymsLoading ? "Loading gyms…" : "Select a gym"}
+              </option>
+              {gyms.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              disabled={!selectedGymId || gymsLoading}
+              onClick={enterSelectedGym}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid #e6e9f0",
+                background: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Continue
+            </button>
+
+            {!gymsLoading && gyms.length === 0 ? (
+              <div style={{ fontSize: 13, opacity: 0.75 }}>
+                No gyms found in <code>gymsPublic</code> (or missing slug).
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div style={{ opacity: 0.7, marginTop: 10, marginBottom: 14 }}>
+            Gym: <b>{slug}</b>
+          </div>
+        )}
+
+        {slug && !exists ? (
+          <div style={{ marginTop: 12 }}>
+            Gym <b>{slug}</b> is not registered. Create{" "}
+            <code>slugs/{slug}</code> → <code>{`{ gymId }`}</code>.
+          </div>
+        ) : null}
 
         <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
           <input
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={inputStyle}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid #e6e9f0",
+            }}
             autoComplete="username"
           />
           <input
@@ -181,12 +244,25 @@ export default function Login() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={inputStyle}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid #e6e9f0",
+            }}
             autoComplete="current-password"
           />
           <button
             disabled={busy}
-            style={{ ...buttonStyle, opacity: busy ? 0.7 : 1 }}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "none",
+              background: "#2563eb",
+              color: "#fff",
+              fontWeight: 600,
+              cursor: "pointer",
+              opacity: busy ? 0.7 : 1,
+            }}
           >
             {busy ? "Signing in…" : "Sign in"}
           </button>
@@ -197,7 +273,7 @@ export default function Login() {
         ) : null}
 
         <div style={{ marginTop: 16, fontSize: 14 }}>
-          New gym/member? <a href="/join">Join this gym</a>
+          New gym/member? <a href={joinHref}>Join this gym</a>
         </div>
       </div>
     </div>

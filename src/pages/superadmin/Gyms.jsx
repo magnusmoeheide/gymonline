@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+// src/pages/superadmin/Gyms.jsx
+import { useEffect, useState, useCallback } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
 export default function Gyms() {
-  const { userDoc, realUserDoc, startSimulation } = useAuth();
+  const { realUserDoc, startSimulation, stopSimulation, isSimulated } =
+    useAuth();
   const nav = useNavigate();
+
   const [gyms, setGyms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -17,11 +20,10 @@ export default function Gyms() {
     const fetchData = async () => {
       try {
         setLoading(true);
+        setError(null);
+
         const gymsSnap = await getDocs(collection(db, "gyms"));
-        const gymsData = gymsSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+        const gymsData = gymsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
         const gymsWithAdmins = await Promise.all(
           gymsData.map(async (gym) => {
@@ -31,9 +33,9 @@ export default function Gyms() {
               where("gymId", "==", gym.id)
             );
             const adminsSnap = await getDocs(adminsQuery);
-            const admins = adminsSnap.docs.map((doc) => ({
-              id: doc.id,
-              ...doc.data(),
+            const admins = adminsSnap.docs.map((d) => ({
+              id: d.id,
+              ...d.data(),
             }));
             return { ...gym, admins };
           })
@@ -42,24 +44,36 @@ export default function Gyms() {
         setGyms(gymsWithAdmins);
       } catch (err) {
         console.error("Error fetching gyms:", err);
-        setError(err.message);
+        setError(err?.message || String(err));
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, [userDoc]);
+  }, [realUserDoc]);
 
-  const handleAccessGym = (gym) => {
-    const admin = gym.admins[0];
-    if (admin) {
+  const handleAccessGym = useCallback(
+    (gym) => {
+      const admin = gym.admins?.[0];
+      if (!admin?.id) {
+        alert("No admin found for this gym.");
+        return;
+      }
+
+      // 1️⃣ start simulation
       startSimulation(admin.id);
-      nav("/admin");
-    } else {
-      alert("No admin found for this gym.");
-    }
-  };
+
+      // 2️⃣ go to tenant-aware admin route
+      nav(`/g/${gym.slug}/admin`);
+    },
+    [startSimulation, nav]
+  );
+
+  const handleExitSimulation = useCallback(() => {
+    stopSimulation();
+    nav("/superadmin");
+  }, [stopSimulation, nav]);
 
   if (realUserDoc?.role !== "SUPER_ADMIN") {
     return (
@@ -90,7 +104,32 @@ export default function Gyms() {
 
   return (
     <div style={{ padding: 24 }}>
-      <h2>All Gyms</h2>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
+        <h2 style={{ margin: 0 }}>All Gyms</h2>
+
+        {isSimulated ? (
+          <button
+            onClick={handleExitSimulation}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            Exit simulation
+          </button>
+        ) : null}
+      </div>
+
       {gyms.length === 0 ? (
         <p>No gyms found.</p>
       ) : (
@@ -111,7 +150,10 @@ export default function Gyms() {
                 <td style={{ padding: "8px" }}>{gym.slug}</td>
                 <td style={{ padding: "8px" }}>{gym.currency}</td>
                 <td style={{ padding: "8px" }}>
-                  {gym.admins.map((admin) => admin.name).join(", ") || "None"}
+                  {gym.admins
+                    ?.map((a) => a.name)
+                    .filter(Boolean)
+                    .join(", ") || "None"}
                 </td>
                 <td style={{ padding: "8px" }}>
                   <button

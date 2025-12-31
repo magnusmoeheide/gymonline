@@ -1,13 +1,5 @@
-import { initializeFirestore, enableNetwork } from "firebase/firestore";
-import { app } from "./firebase";
+// src/firebase/db.js
+import { getApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 
-export const db = initializeFirestore(
-  app,
-  {
-    experimentalForceLongPolling: true,
-    useFetchStreams: false,
-  },
-  "gymonline-db"
-);
-
-enableNetwork(db).catch(() => {});
+export const db = getFirestore(getApp(), "gymonline-db");

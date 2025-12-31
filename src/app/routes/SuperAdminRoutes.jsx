@@ -10,7 +10,7 @@ export default function SuperAdminRoutes() {
       <RequireRole allow={["SUPER_ADMIN"]}>
         <Layout mode="superadmin">
           <Routes>
-            <Route path="/" element={<Gyms />} />
+            <Route index element={<Gyms />} />
           </Routes>
         </Layout>
       </RequireRole>

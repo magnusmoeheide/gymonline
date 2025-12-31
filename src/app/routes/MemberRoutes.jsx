@@ -12,11 +12,11 @@ export default function MemberRoutes() {
     <RequireAuth>
       <Layout mode="member">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/membership" element={<Membership />} />
-          <Route path="/store" element={<Store />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/profile" element={<Profile />} />
+          <Route index element={<Dashboard />} />
+          <Route path="membership" element={<Membership />} />
+          <Route path="store" element={<Store />} />
+          <Route path="orders" element={<Orders />} />
+          <Route path="profile" element={<Profile />} />
         </Routes>
       </Layout>
     </RequireAuth>

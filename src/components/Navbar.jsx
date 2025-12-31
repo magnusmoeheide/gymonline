@@ -1,12 +1,27 @@
-// src/components/Navbar.jsx (or wherever your sidebar navbar is)
+// src/components/Navbar.jsx
 import { memo, useCallback, useMemo } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase/auth";
 import { useAuth } from "../context/AuthContext";
 
+function normPath(p) {
+  const s = String(p || "").trim();
+  if (!s) return "";
+  return s.startsWith("/") ? s : `/${s}`;
+}
+
+function join(basePath, p) {
+  const b = normPath(basePath);
+  const path = normPath(p);
+  if (!b) return path || "/";
+  if (!path) return b;
+  if (path === "/") return b;
+  return `${b}${path}`;
+}
+
 const MEMBER_LINKS = [
-  { to: "/app", label: "Dashboard" },
+  { to: "/app", label: "Dashboard", end: true },
   { to: "/app/membership", label: "Membership" },
   { to: "/app/orders", label: "Orders" },
   { to: "/app/store", label: "Store" },
@@ -27,29 +42,45 @@ const SUPERADMIN_LINKS = [{ to: "/superadmin", label: "Gyms", end: true }];
 
 function Navbar({ mode = "member" }) {
   const nav = useNavigate();
-  const { userDoc, gymName, stopSimulation, isSimulated, realUserDoc } =
-    useAuth();
+  const params = useParams(); // will include slug on /g/:slug/*
+  const slug = params?.slug ? String(params.slug) : "";
+  const basePath = slug ? `/g/${slug}` : "";
+
+  const { userDoc, stopSimulation, isSimulated, realUserDoc } = useAuth();
 
   const links = useMemo(() => {
     if (mode === "superadmin") return SUPERADMIN_LINKS;
-    const base = mode === "admin" ? [...ADMIN_LINKS] : MEMBER_LINKS;
-    return base;
-  }, [mode]);
+
+    const raw = mode === "admin" ? ADMIN_LINKS : MEMBER_LINKS;
+
+    // If there is NO slug in the URL, don't prefix anything (superadmin/global pages)
+    if (!basePath) return raw;
+
+    // Prefix tenant basePath so links work under /g/:slug/*
+    return raw.map((l) => ({
+      ...l,
+      to: join(basePath, l.to),
+    }));
+  }, [mode, basePath]);
 
   const handleLogout = useCallback(async () => {
     stopSimulation();
     await signOut(auth);
-    nav("/login");
-  }, [nav, stopSimulation]);
+    nav(basePath ? `${basePath}/login` : "/login");
+  }, [nav, stopSimulation, basePath]);
 
   const exitSim = useCallback(() => {
     stopSimulation();
-    nav("/admin"); // go back to admin overview
-  }, [nav, stopSimulation]);
+    if (realUserDoc?.role === "SUPER_ADMIN") {
+      nav("/superadmin");
+      return;
+    }
+    // if we're in a tenant route, go back to that tenant admin home
+    nav(basePath ? `${basePath}/admin` : "/login");
+  }, [nav, stopSimulation, realUserDoc, basePath]);
 
   const name = userDoc?.name || "";
   const role = userDoc?.role || "";
-  const realRole = realUserDoc?.role || "";
 
   return (
     <aside
@@ -70,27 +101,28 @@ function Navbar({ mode = "member" }) {
     >
       <div style={{ display: "grid", gap: 6 }}>
         <div style={{ fontWeight: 800, letterSpacing: 0.2 }}>
-          {mode === "superadmin" ? "Super Admin" : gymName || "Gym"} Intranet
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.65 }}>
-          {!isSimulated && <>User: {name}</>}
+          {mode === "superadmin" ? "Super Admin" : "Gym"} Intranet
         </div>
         <div style={{ fontSize: 12, opacity: 0.65 }}>
           {isSimulated ? (
             <>
-              Simulating: <b>{name || "user"}</b> <br />
-              Role: <b>{role || "undefined"}</b>
+              Simulating: <b>{name || "user"}</b>
             </>
-          ) : role ? (
-            <>Role: {role}</>
-          ) : null}
+          ) : (
+            <>User: {name}</>
+          )}
         </div>
+        {role ? (
+          <div style={{ fontSize: 12, opacity: 0.65 }}>
+            Role: <b>{role}</b>
+          </div>
+        ) : null}
       </div>
 
       <nav style={{ display: "grid", gap: 6, marginTop: 10 }}>
         {links.map((l) => (
           <NavLink
-            key={l.to}
+            key={`${l.to}-${l.label}`}
             to={l.to}
             end={l.end}
             style={({ isActive }) => ({
@@ -141,7 +173,12 @@ function Navbar({ mode = "member" }) {
         </button>
 
         <div style={{ fontSize: 12, opacity: 0.55 }}>
-          {mode === "admin" ? "Admin" : "Member"} view
+          {mode === "admin"
+            ? "Admin"
+            : mode === "superadmin"
+            ? "Superadmin"
+            : "Member"}{" "}
+          view
         </div>
       </div>
     </aside>
