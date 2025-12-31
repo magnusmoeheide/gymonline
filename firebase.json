@@ -1,8 +1,11 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "database": "gymonline-db"
-  },
+  "firestore": [
+    {
+      "database": "gymonline-db",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    }
+  ],
   "functions": [
     {
       "source": "functions",
@@ -16,7 +19,7 @@
       ]
     }
   ],
-   "hosting": {
+  "hosting": {
     "public": "dist",
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   }
