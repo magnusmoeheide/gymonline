@@ -89,12 +89,18 @@ export default function Products() {
   }
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Products (Supplements)</h2>
 
       <form
         onSubmit={create}
-        style={{ display: "grid", gap: 8, maxWidth: 520, marginBottom: 16 }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 8,
+          marginBottom: 16,
+          alignItems: "center",
+        }}
       >
         <input
           placeholder="Product name"
@@ -141,7 +147,7 @@ export default function Products() {
           {!products.length ? (
             <tr>
               <td colSpan="4" style={{ opacity: 0.7 }}>
-                No products yet.
+                {busy ? "Loading…" : "No products yet."}
               </td>
             </tr>
           ) : null}

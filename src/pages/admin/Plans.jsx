@@ -113,12 +113,18 @@ export default function Plans() {
   }
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Plans (Bundles)</h2>
 
       <form
         onSubmit={createPlan}
-        style={{ display: "grid", gap: 8, maxWidth: 560, marginBottom: 16 }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+          gap: 8,
+          marginBottom: 16,
+          alignItems: "center",
+        }}
       >
         <input
           placeholder="Plan name (e.g., Monthly)"
@@ -187,7 +193,7 @@ export default function Plans() {
           {!plans.length ? (
             <tr>
               <td colSpan="5" style={{ opacity: 0.7 }}>
-                No plans yet.
+                {busy ? "Loading…" : "No plans yet."}
               </td>
             </tr>
           ) : null}

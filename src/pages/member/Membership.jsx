@@ -84,7 +84,11 @@ export default function Membership() {
     <div style={{ maxWidth: 720 }}>
       <h2>My Membership</h2>
 
-      {busy ? <div>Loading…</div> : null}
+      {busy ? (
+        <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
+          Loading…
+        </div>
+      ) : null}
 
       {!busy && !sub ? (
         <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 8 }}>

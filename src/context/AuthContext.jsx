@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import { auth } from "../firebase/auth";
 import { db } from "../firebase/db";
 
@@ -17,7 +17,8 @@ const AuthContext = createContext(null);
 export const SIM_KEY = "SIMULATED_USER_ID";
 
 export function AuthProvider({ children }) {
-  const [authUser, setAuthUser] = useState(null);
+  const [authUser, setAuthUser] = useState(undefined);
+  const [authReady, setAuthReady] = useState(false);
 
   const [realUserDoc, setRealUserDoc] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
@@ -25,18 +26,41 @@ export function AuthProvider({ children }) {
   const [gymName, setGymName] = useState(null);
 
   const [simUid, setSimUid] = useState(
-    () => localStorage.getItem(SIM_KEY) || ""
+    () => localStorage.getItem(SIM_KEY) || "",
   );
   const [loading, setLoading] = useState(true);
+  // Keep doc reads simple; timeouts here can hide successful reads.
 
   // 1) Auth only
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => setAuthUser(u || null));
+    return onAuthStateChanged(auth, (u) => {
+      setAuthUser(u || null);
+      setAuthReady(true);
+    });
   }, []);
+
+  // Safety: don't hang forever if auth init stalls
+  useEffect(() => {
+    if (authReady) return;
+    const t = setTimeout(() => {
+      console.warn("AuthContext: auth init timeout, assuming signed out");
+      setAuthUser(null);
+      setAuthReady(true);
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [authReady]);
 
   // 2) Load docs whenever authUser or simUid changes
   useEffect(() => {
     let alive = true;
+
+    // Wait for Firebase to report initial auth state
+    if (!authReady) {
+      setLoading(true);
+      return () => {
+        alive = false;
+      };
+    }
 
     async function safeSignOut(reason) {
       console.error("AuthContext: signing out:", reason);
@@ -73,8 +97,27 @@ export function AuthProvider({ children }) {
         }
 
         // Real signed-in user doc
-        const realSnap = await getDoc(doc(db, "users", authUser.uid));
-        const real = realSnap.exists() ? realSnap.data() : null;
+        let realSnap = await getDoc(doc(db, "users", authUser.uid));
+        let real = realSnap?.exists?.() ? realSnap.data() : null;
+
+        // Fallback: if user doc ID doesn't match auth uid, try by email
+        if (!real && authUser?.email) {
+          try {
+            const q = query(
+              collection(db, "users"),
+              where("email", "==", authUser.email.toLowerCase()),
+              limit(1),
+            );
+            const snap = await getDocs(q);
+            if (!alive) return;
+            if (!snap.empty) {
+              realSnap = snap.docs[0];
+              real = realSnap.data() || null;
+            }
+          } catch (e) {
+            console.warn("AuthContext email lookup failed:", e);
+          }
+        }
         if (!alive) return;
 
         setRealUserDoc(real);
@@ -123,7 +166,7 @@ export function AuthProvider({ children }) {
           const simSnap = await getDoc(doc(db, "users", simUid));
           if (!alive) return;
 
-          if (simSnap.exists()) {
+          if (simSnap?.exists?.()) {
             const sim = simSnap.data() || {};
 
             // Enforce same-gym simulation for GYM_ADMIN (optional)
@@ -156,7 +199,7 @@ export function AuthProvider({ children }) {
         // superadmin/global can have no gym
         if (effectiveGymId && effectiveGymId !== "__global__") {
           const gymSnap = await getDoc(doc(db, "gyms", effectiveGymId));
-          if (gymSnap.exists()) gn = gymSnap.data()?.name || null;
+          if (gymSnap?.exists?.()) gn = gymSnap.data()?.name || null;
         }
 
         if (!alive) return;
@@ -178,7 +221,7 @@ export function AuthProvider({ children }) {
     return () => {
       alive = false;
     };
-  }, [authUser, simUid]);
+  }, [authUser, simUid, authReady]);
 
   const startSimulation = useCallback((uid) => {
     const v = String(uid || "").trim();
@@ -194,11 +237,13 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(
     () => ({
+      user: authUser,
       authUser,
       realUserDoc,
       userDoc,
       gymName,
       loading,
+      authReady,
       startSimulation,
       stopSimulation,
       isSimulated: !!userDoc?.__simulated,
@@ -209,9 +254,10 @@ export function AuthProvider({ children }) {
       userDoc,
       gymName,
       loading,
+      authReady,
       startSimulation,
       stopSimulation,
-    ]
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

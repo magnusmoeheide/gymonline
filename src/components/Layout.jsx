@@ -1,24 +1,23 @@
-// Layout.jsx (works with the sidebar Navbar above)
+// src/components/Layout.jsx (replace)
 import Navbar from "./Navbar";
 
 export default function Layout({ children, mode }) {
   return (
     <div
-      style={{ fontFamily: "system-ui", display: "flex", minHeight: "100vh" }}
+      style={{
+        display: "flex",
+        minHeight: "100vh",
+      }}
     >
       <Navbar mode={mode} />
-      <main style={{ flex: 1, padding: 20, background: "#fafafa" }}>
-        <div
-          style={{
-            background: "#fff",
-            border: "1px solid #eee",
-            borderRadius: 12,
-            padding: 16,
-            minHeight: "calc(100vh - 40px)",
-          }}
-        >
-          {children}
-        </div>
+
+      <main
+        style={{
+          flex: 1,
+          padding: 28,
+        }}
+      >
+        {children}
       </main>
     </div>
   );

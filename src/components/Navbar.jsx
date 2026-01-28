@@ -38,7 +38,11 @@ const ADMIN_LINKS = [
   { to: "/admin/settings", label: "Settings" },
 ];
 
-const SUPERADMIN_LINKS = [{ to: "/superadmin", label: "Gyms", end: true }];
+const SUPERADMIN_LINKS = [
+  { to: "/superadmin", label: "Gyms", end: true },
+  { to: "/superadmin/payments", label: "Payments" },
+  { to: "/superadmin/settings", label: "Settings" },
+];
 
 function Navbar({ mode = "member" }) {
   const nav = useNavigate();
@@ -79,7 +83,13 @@ function Navbar({ mode = "member" }) {
     nav(basePath ? `${basePath}/admin` : "/login");
   }, [nav, stopSimulation, realUserDoc, basePath]);
 
-  const name = userDoc?.name || "";
+  const name =
+    userDoc?.name ||
+    userDoc?.fullName ||
+    userDoc?.displayName ||
+    auth?.currentUser?.displayName ||
+    auth?.currentUser?.email ||
+    "";
   const role = userDoc?.role || "";
 
   return (

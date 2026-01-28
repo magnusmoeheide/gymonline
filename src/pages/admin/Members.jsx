@@ -25,12 +25,16 @@ export default function Members() {
   const gymId = userDoc?.gymId;
 
   const [members, setMembers] = useState([]);
+  const [subs, setSubs] = useState([]);
   const [busy, setBusy] = useState(false);
 
   // create
   const [name, setName] = useState("");
-  const [phoneE164, setPhoneE164] = useState("");
+  const [countryCode, setCountryCode] = useState("+254");
+  const [phoneLocal, setPhoneLocal] = useState("");
   const [email, setEmail] = useState("");
+  const [comments, setComments] = useState("");
+  const [sendWelcomeSms, setSendWelcomeSms] = useState(true);
 
   // edit
   const [editingId, setEditingId] = useState("");
@@ -38,6 +42,7 @@ export default function Members() {
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState(""); // display only; not editable by default
   const [editStatus, setEditStatus] = useState("active");
+  const [editComments, setEditComments] = useState("");
 
   const memberById = useMemo(() => {
     const m = new Map();
@@ -45,17 +50,43 @@ export default function Members() {
     return m;
   }, [members]);
 
+  const memberSubStatus = useMemo(() => {
+    const now = new Date();
+    const map = new Map();
+    for (const s of subs) {
+      const uid = s.userId;
+      if (!uid) continue;
+      const end = s.endDate?.toDate ? s.endDate.toDate() : null;
+      const start = s.startDate?.toDate ? s.startDate.toDate() : null;
+      const isActive =
+        s.status === "active" &&
+        (!start || start <= now) &&
+        (!end || end >= now);
+      const prev = map.get(uid) || { hasAny: false, isActive: false };
+      map.set(uid, {
+        hasAny: true,
+        isActive: prev.isActive || isActive,
+      });
+    }
+    return map;
+  }, [subs]);
+
   async function load() {
     if (!gymId) return;
     setBusy(true);
     try {
-      const q = query(
+      const membersQ = query(
         collection(db, "users"),
         where("gymId", "==", gymId),
         where("role", "==", "MEMBER")
       );
-      const snap = await getDocs(q);
-      setMembers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const subsQ = query(collection(db, "subscriptions"), where("gymId", "==", gymId));
+      const [mSnap, sSnap] = await Promise.all([
+        getDocs(membersQ),
+        getDocs(subsQ),
+      ]);
+      setMembers(mSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSubs(sSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } finally {
       setBusy(false);
     }
@@ -70,21 +101,41 @@ export default function Members() {
     e.preventDefault();
 
     const n = normalizeName(name);
-    const p = normalizePhone(phoneE164);
     const em = normalizeEmail(email);
+    const rawPhone = normalizePhone(phoneLocal);
+    const phoneDigits = rawPhone.replace(/\D/g, "");
+    const phoneOk =
+      !phoneDigits ||
+      (countryCode === "+254"
+        ? phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0])
+        : phoneDigits.length >= 6);
+    const phoneE164 = phoneDigits ? `${countryCode}${phoneDigits}` : "";
 
     if (!n) return alert("Name required");
-    if (!p.startsWith("+")) return alert("Phone must be E.164 (+...)");
-    if (!em) return alert("Email required");
+    if (!em && !phoneDigits) return alert("Email or phone required");
+    if (phoneDigits && !phoneOk)
+      return alert(
+        "Phone format invalid. For Kenya use 9 digits, starting with 7 or 1.",
+      );
 
     setBusy(true);
     try {
       const createMember = httpsCallable(functions, "createMember");
-      await createMember({ name: n, phoneE164: p, email: em });
+      await createMember({
+        name: n,
+        phoneE164: phoneE164 || null,
+        email: em || null,
+        sendWelcomeSms: !!sendWelcomeSms,
+        gymId: userDoc?.gymId || null,
+        gymSlug: userDoc?.gymSlug || null,
+        comments: String(comments || "").trim() || null,
+      });
 
       setName("");
-      setPhoneE164("");
+      setPhoneLocal("");
       setEmail("");
+      setComments("");
+      setSendWelcomeSms(true);
       await load();
     } catch (err) {
       console.error(err);
@@ -102,6 +153,7 @@ export default function Members() {
     setEditName(m.name || "");
     setEditPhone(m.phoneE164 || "");
     setEditEmail(m.email || "");
+    setEditComments(m.comments || "");
     setEditStatus(m.status || "active");
   }
 
@@ -110,6 +162,7 @@ export default function Members() {
     setEditName("");
     setEditPhone("");
     setEditEmail("");
+    setEditComments("");
     setEditStatus("active");
   }
 
@@ -119,6 +172,7 @@ export default function Members() {
     const n = normalizeName(editName);
     const p = normalizePhone(editPhone);
     const st = String(editStatus || "active").trim();
+    const c = String(editComments || "").trim() || null;
 
     if (!n) return alert("Name required");
     if (!p.startsWith("+")) return alert("Phone must be E.164 (+...)");
@@ -133,6 +187,7 @@ export default function Members() {
       await updateDoc(ref, {
         name: n,
         phoneE164: p,
+        comments: c,
         status: st,
         updatedAt: new Date(),
       });
@@ -148,40 +203,67 @@ export default function Members() {
   }
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Members</h2>
 
       <form
         onSubmit={addMember}
         style={{
           display: "grid",
+          gridTemplateColumns: "1.1fr 0.6fr 1fr 1.1fr 1.2fr 0.9fr 0.8fr",
           gap: 8,
-          maxWidth: 520,
           marginBottom: 16,
           padding: 12,
           border: "1px solid #eee",
           borderRadius: 10,
           background: "#fff",
+          alignItems: "center",
         }}
       >
-        <div style={{ fontWeight: 700 }}>Add member</div>
         <input
           placeholder="Full name"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <select
+          value={countryCode}
+          onChange={(e) => setCountryCode(e.target.value)}
+        >
+          <option value="+254">Kenya (+254)</option>
+          <option value="+255">Tanzania (+255)</option>
+          <option value="+256">Uganda (+256)</option>
+          <option value="+250">Rwanda (+250)</option>
+          <option value="+257">Burundi (+257)</option>
+          <option value="+251">Ethiopia (+251)</option>
+        </select>
         <input
-          placeholder="Phone (E.164) e.g. +2547..."
-          value={phoneE164}
-          onChange={(e) => setPhoneE164(e.target.value)}
+          placeholder="Phone (e.g. 712345678)"
+          value={phoneLocal}
+          onChange={(e) => setPhoneLocal(e.target.value)}
         />
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
+        <textarea
+          rows={1}
+          placeholder="Comments"
+          value={comments}
+          onChange={(e) => setComments(e.target.value)}
+        />
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={sendWelcomeSms}
+            onChange={(e) => setSendWelcomeSms(e.target.checked)}
+          />
+          <span style={{ fontSize: 12, opacity: 0.8 }}>
+            Send welcome SMS
+          </span>
+        </label>
         <button disabled={busy}>
-          {busy ? "Saving…" : "Add member & send reset email"}
+          {busy ? "Saving…" : "Add member"}
         </button>
       </form>
 
@@ -196,6 +278,8 @@ export default function Members() {
             <th align="left">Phone</th>
             <th align="left">Email</th>
             <th align="left">Status</th>
+            <th align="left">Subscription</th>
+            <th align="left">Comments</th>
             <th align="left">Actions</th>
           </tr>
         </thead>
@@ -253,6 +337,25 @@ export default function Members() {
                   )}
                 </td>
                 <td>
+                  {(() => {
+                    const s = memberSubStatus.get(m.id);
+                    if (!s) return "—";
+                    return s.isActive ? "Active" : "Expired";
+                  })()}
+                </td>
+                <td>
+                  {isEditing ? (
+                    <textarea
+                      rows={1}
+                      value={editComments}
+                      onChange={(e) => setEditComments(e.target.value)}
+                      placeholder="Comments"
+                    />
+                  ) : (
+                    m.comments || "—"
+                  )}
+                </td>
+                <td>
                   {isEditing ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <button disabled={busy} type="button" onClick={saveEdit}>
@@ -281,8 +384,8 @@ export default function Members() {
           })}
           {!members.length ? (
             <tr>
-              <td colSpan="5" style={{ opacity: 0.7 }}>
-                No members yet.
+              <td colSpan="7" style={{ opacity: 0.7 }}>
+                {busy ? "Loading…" : "No members yet."}
               </td>
             </tr>
           ) : null}

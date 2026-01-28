@@ -2,4 +2,8 @@
 import { getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-export const db = getFirestore(getApp(), "gymonline-db");
+const app = getApp();
+const DB_ID = "gymonline-db";
+
+// Primary DB used by the web app. Keep in sync with Firebase console DB.
+export const db = getFirestore(app, DB_ID);

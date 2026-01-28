@@ -80,7 +80,7 @@ function requireRole(caller, allowed) {
  * match /gymsPublic/{id} { allow read: if true; allow write: if false; }
  */
 exports.syncGymToPublic = onDocumentWritten(
-  { document: "gyms/{gymId}", region: "us-central1" },
+  { document: "gyms/{gymId}", region: "us-central1", database: DB_ID },
   async (event) => {
     const gymId = event.params.gymId;
 
@@ -95,6 +95,8 @@ exports.syncGymToPublic = onDocumentWritten(
       {
         name: data.name || data.gymName || "",
         slug: data.slug || data.subdomain || "",
+        loginLogoUrl: data.loginLogoUrl || "",
+        loginText: data.loginText || "",
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -110,57 +112,133 @@ exports.createMember = onCall({ region: "us-central1" }, async (request) => {
   if (!["GYM_ADMIN", "SUPER_ADMIN"].includes(caller?.role))
     throw new HttpsError("permission-denied", "Not allowed");
 
+  // Resolve caller gym slug if missing
+  let resolvedGymSlug = caller?.gymSlug || null;
+  let resolvedGymId = caller?.gymId || null;
+  const reqGymId = String(request.data?.gymId || "").trim();
+  const reqGymSlug = normalizeSlug(request.data?.gymSlug || request.data?.slug);
+  if (!resolvedGymId) {
+    throw new HttpsError("failed-precondition", "Caller missing gymId");
+  }
+
+  // SUPER_ADMIN/global can pass target gym explicitly
+  if (resolvedGymId === "__global__") {
+    if (reqGymId) resolvedGymId = reqGymId;
+    if (reqGymSlug) resolvedGymSlug = reqGymSlug;
+  }
+
+  // If caller.gymId is actually a slug, resolve it
+  if (!resolvedGymSlug) {
+    const slugSnap = await db.doc(`slugs/${resolvedGymId}`).get();
+    if (slugSnap.exists) {
+      const gid = slugSnap.data()?.gymId || null;
+      if (gid) {
+        resolvedGymSlug = resolvedGymId;
+        resolvedGymId = gid;
+      }
+    }
+  }
+
+  if (!resolvedGymSlug) {
+    const gymSnap = await db.doc(`gyms/${resolvedGymId}`).get();
+    if (gymSnap.exists) {
+      resolvedGymSlug = gymSnap.data()?.slug || null;
+    }
+  }
+
+  if (!resolvedGymSlug) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Caller gymSlug missing and could not be resolved",
+    );
+  }
+
   const name = String(request.data?.name || "").trim();
   const phoneE164 = String(request.data?.phoneE164 || "").trim();
   const email = String(request.data?.email || "").trim().toLowerCase();
+  const sendWelcomeSms = !!request.data?.sendWelcomeSms;
 
   if (!name) throw new HttpsError("invalid-argument", "name required");
-  if (!phoneE164.startsWith("+"))
+  if (!email && !phoneE164)
+    throw new HttpsError("invalid-argument", "email or phoneE164 required");
+  if (phoneE164 && !phoneE164.startsWith("+"))
     throw new HttpsError("invalid-argument", "phoneE164 must be E.164");
-  if (!email) throw new HttpsError("invalid-argument", "email required");
-
-  // 🔐 generate strong random password (user never sees it)
-  const randomPassword =
-    Math.random().toString(36).slice(-10) +
-    Math.random().toString(36).slice(-10);
 
   let authUser;
   try {
-    authUser = await admin.auth().createUser({
-      email,
-      password: randomPassword,
-      displayName: name,
-    });
+    if (email) {
+      // 🔐 generate strong random password (user never sees it)
+      const randomPassword =
+        Math.random().toString(36).slice(-10) +
+        Math.random().toString(36).slice(-10);
+      authUser = await admin.auth().createUser({
+        email,
+        password: randomPassword,
+        displayName: name,
+      });
+    } else {
+      authUser = await admin.auth().createUser({
+        phoneNumber: phoneE164,
+        displayName: name,
+      });
+    }
   } catch (e) {
     if (String(e?.code).includes("email-already-exists")) {
       throw new HttpsError("already-exists", "Email already exists");
     }
-    throw e;
+    if (String(e?.code).includes("phone-number-already-exists")) {
+      throw new HttpsError("already-exists", "Phone already exists");
+    }
+    throw new HttpsError("internal", e?.message || "Failed to create auth user");
   }
 
-  await db.doc(`users/${authUser.uid}`).set({
-    gymId: caller.gymId,
-    gymSlug: caller.gymSlug,
-    role: "MEMBER",
-    name,
-    phoneE164,
-    email,
-    status: "active",
-    createdAt: FieldValue.serverTimestamp(),
-  });
-
-  // 📧 force password reset email
-  const resetLink = await admin.auth().generatePasswordResetLink(email);
-
-  // Optional: send SMS instead of email
   try {
-    const client = await twilioClient();
-    await client.messages.create({
-      to: phoneE164,
-      from: TWILIO_DEFAULT_FROM.value(),
-      body: `Welcome to ${caller.gymSlug}. Set your password here: ${resetLink}`,
+    await db.doc(`users/${authUser.uid}`).set({
+      gymId: resolvedGymId,
+      gymSlug: resolvedGymSlug,
+      role: "MEMBER",
+      name,
+      phoneE164: phoneE164 || null,
+      email: email || null,
+      comments: String(request.data?.comments || "").trim() || null,
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
     });
-  } catch {}
+  } catch (e) {
+    // Roll back Auth user if Firestore write fails
+    try {
+      await admin.auth().deleteUser(authUser.uid);
+    } catch {}
+    throw new HttpsError(
+      "internal",
+      e?.message || "Failed to create user profile",
+    );
+  }
+
+  // 📧 force password reset email (email-based accounts)
+  let resetLink = null;
+  if (email) {
+    try {
+      resetLink = await admin.auth().generatePasswordResetLink(email);
+    } catch (e) {
+      logger.warn("Password reset link failed", { message: e?.message });
+    }
+  }
+
+  if (sendWelcomeSms && phoneE164) {
+    try {
+      const client = await twilioClient();
+      await client.messages.create({
+        to: phoneE164,
+        from: TWILIO_DEFAULT_FROM.value(),
+        body: resetLink
+          ? `Welcome to ${caller.gymSlug}. Set your password here: ${resetLink}`
+          : `Welcome to ${caller.gymSlug}. Your account is ready.`,
+      });
+    } catch (e) {
+      logger.warn("Welcome SMS failed", { message: e?.message });
+    }
+  }
 
   return { ok: true };
 });
@@ -250,8 +328,8 @@ exports.createGymAndAdmin = onCall({ region: "us-central1" }, async (request) =>
       "invalid-argument",
       "adminPhoneE164 must be E.164 (+...)"
     );
-  if (adminPassword.length < 8)
-    throw new HttpsError("invalid-argument", "adminPassword min 8 chars");
+  if (adminPassword.length < 6)
+    throw new HttpsError("invalid-argument", "adminPassword min 6 chars");
 
   // slug must be unique
   const slugRef = db.doc(`slugs/${slug}`);
@@ -362,8 +440,8 @@ exports.createGymAdmin = onCall({ region: "us-central1" }, async (request) => {
   if (!phoneE164.startsWith("+"))
     throw new HttpsError("invalid-argument", "phoneE164 must be E.164 (+...)");
   if (!email) throw new HttpsError("invalid-argument", "email required");
-  if (tempPassword.length < 8)
-    throw new HttpsError("invalid-argument", "tempPassword min 8 chars");
+  if (tempPassword.length < 6)
+    throw new HttpsError("invalid-argument", "tempPassword min 6 chars");
 
   let authUser;
   try {
@@ -409,6 +487,310 @@ exports.createGymAdmin = onCall({ region: "us-central1" }, async (request) => {
 
   return { ok: true, uid: authUser.uid };
 });
+
+exports.createGymAdminForGym = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const inputGymId = String(request.data?.gymId || "").trim();
+    const inputGymSlug = normalizeSlug(request.data?.gymSlug || request.data?.slug);
+
+    if (!inputGymId && !inputGymSlug)
+      throw new HttpsError("invalid-argument", "gymId or gymSlug required");
+
+    let gymId = inputGymId;
+    let gymSlug = inputGymSlug || null;
+
+    if (!gymId && gymSlug) {
+      const slugSnap = await db.doc(`slugs/${gymSlug}`).get();
+      if (!slugSnap.exists)
+        throw new HttpsError("not-found", "Gym slug not found");
+      gymId = slugSnap.data()?.gymId || "";
+    }
+
+    if (!gymId)
+      throw new HttpsError("failed-precondition", "gymId not resolved");
+
+    if (!gymSlug) {
+      const gymSnap = await db.doc(`gyms/${gymId}`).get();
+      if (!gymSnap.exists)
+        throw new HttpsError("not-found", "Gym not found");
+      gymSlug = gymSnap.data()?.slug || null;
+    }
+
+    const name = String(request.data?.name || "").trim();
+    const phoneE164 = String(request.data?.phoneE164 || "").trim();
+    const email = String(request.data?.email || "").trim().toLowerCase();
+    const tempPassword = String(request.data?.tempPassword || "").trim();
+
+    if (!name) throw new HttpsError("invalid-argument", "name required");
+    if (!phoneE164.startsWith("+"))
+      throw new HttpsError("invalid-argument", "phoneE164 must be E.164 (+...)");
+    if (!email) throw new HttpsError("invalid-argument", "email required");
+    if (tempPassword.length < 6)
+      throw new HttpsError("invalid-argument", "tempPassword min 6 chars");
+
+    let authUser;
+    try {
+      authUser = await admin.auth().createUser({
+        email,
+        password: tempPassword,
+        displayName: name,
+      });
+    } catch (e) {
+      if (String(e?.code || "").includes("email-already-exists")) {
+        throw new HttpsError("already-exists", "Email already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to create user");
+    }
+
+    await db.doc(`users/${authUser.uid}`).set({
+      gymId,
+      gymSlug: gymSlug || null,
+      role: "GYM_ADMIN",
+      name,
+      phoneE164,
+      email,
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    // optional SMS
+    try {
+      const client = await twilioClient();
+      await client.messages.create({
+        to: phoneE164,
+        from: TWILIO_DEFAULT_FROM.value(),
+        body: `You were added as a Gym Admin for ${
+          gymSlug || "your gym"
+        }. Login: ${email}. Temp password: ${tempPassword}.`,
+      });
+    } catch (smsErr) {
+      logger.warn("Twilio SMS failed (admin still created)", {
+        message: smsErr?.message,
+      });
+    }
+
+    return { ok: true, uid: authUser.uid, gymId, gymSlug };
+  }
+);
+
+exports.updateGymAdminEmail = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    const email = String(request.data?.email || "").trim().toLowerCase();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+    if (!email) throw new HttpsError("invalid-argument", "email required");
+
+    const userRef = db.doc(`users/${uid}`);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists)
+      throw new HttpsError("not-found", "User not found");
+    const data = userSnap.data() || {};
+    if (data.role !== "GYM_ADMIN") {
+      throw new HttpsError("failed-precondition", "User is not a GYM_ADMIN");
+    }
+
+    try {
+      await admin.auth().updateUser(uid, { email });
+    } catch (e) {
+      if (String(e?.code || "").includes("email-already-exists")) {
+        throw new HttpsError("already-exists", "Email already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to update auth");
+    }
+
+    await userRef.update({
+      email,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true };
+  }
+);
+
+exports.createSuperAdmin = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const name = String(request.data?.name || "").trim();
+    const email = String(request.data?.email || "").trim().toLowerCase();
+    const phoneE164 = String(request.data?.phoneE164 || "").trim();
+    const password = String(request.data?.password || "").trim();
+
+    if (!name) throw new HttpsError("invalid-argument", "name required");
+    if (!email) throw new HttpsError("invalid-argument", "email required");
+    if (password.length < 6)
+      throw new HttpsError("invalid-argument", "password min 6 chars");
+    if (phoneE164 && !phoneE164.startsWith("+"))
+      throw new HttpsError("invalid-argument", "phoneE164 must be E.164 (+...)");
+
+    let authUser;
+    try {
+      authUser = await admin.auth().createUser({
+        email,
+        password,
+        displayName: name,
+      });
+    } catch (e) {
+      if (String(e?.code || "").includes("email-already-exists")) {
+        throw new HttpsError("already-exists", "Email already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to create user");
+    }
+
+    await db.doc(`users/${authUser.uid}`).set({
+      gymId: "__global__",
+      role: "SUPER_ADMIN",
+      name,
+      phoneE164: phoneE164 || null,
+      email,
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true, uid: authUser.uid };
+  }
+);
+
+exports.deleteSuperAdmin = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+    if (uid === request.auth.uid)
+      throw new HttpsError("failed-precondition", "Cannot delete yourself");
+
+    const userRef = db.doc(`users/${uid}`);
+    const snap = await userRef.get();
+    if (!snap.exists)
+      throw new HttpsError("not-found", "User not found");
+    const data = snap.data() || {};
+    if (data.role !== "SUPER_ADMIN") {
+      throw new HttpsError("failed-precondition", "User is not a SUPER_ADMIN");
+    }
+
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (e) {
+      throw new HttpsError("internal", e?.message || "Failed to delete auth");
+    }
+
+    await userRef.delete().catch(() => {});
+    return { ok: true };
+  }
+);
+
+exports.updateOwnProfile = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    if (!caller)
+      throw new HttpsError("permission-denied", "Missing user profile");
+    if (!["GYM_ADMIN", "STAFF"].includes(caller.role)) {
+      throw new HttpsError("permission-denied", "Not allowed");
+    }
+
+    const email = String(request.data?.email || "").trim().toLowerCase();
+    const name = String(request.data?.name || "").trim();
+    const phoneE164 = String(request.data?.phoneE164 || "").trim();
+
+    if (!email) throw new HttpsError("invalid-argument", "email required");
+    if (phoneE164 && !phoneE164.startsWith("+"))
+      throw new HttpsError("invalid-argument", "phoneE164 must be E.164 (+...)");
+
+    try {
+      await admin.auth().updateUser(request.auth.uid, {
+        email,
+        displayName: name || undefined,
+      });
+    } catch (e) {
+      if (String(e?.code || "").includes("email-already-exists")) {
+        throw new HttpsError("already-exists", "Email already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to update auth");
+    }
+
+    await db.doc(`users/${request.auth.uid}`).update({
+      email,
+      name: name || null,
+      phoneE164: phoneE164 || null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true };
+  }
+);
+
+exports.setGymPaymentStatus = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const gymId = String(request.data?.gymId || "").trim();
+    let month = String(request.data?.month || "").trim(); // YYYY-MM
+    const paid = !!request.data?.paid;
+    const amountDue = Number(request.data?.amountDue) || 0;
+    const userCount = Number(request.data?.userCount) || 0;
+    const comments = String(request.data?.comments || "").trim() || null;
+
+    if (!gymId) throw new HttpsError("invalid-argument", "gymId required");
+    if (!month) throw new HttpsError("invalid-argument", "month required");
+    // normalize month to YYYY-MM
+    if (/^\d{4}-\d{1,2}$/.test(month)) {
+      const [y, m] = month.split("-");
+      month = `${y}-${String(Number(m)).padStart(2, "0")}`;
+    }
+
+    await db.doc(`gymPayments/${gymId}_${month}`).set(
+      {
+        gymId,
+        month,
+        paid,
+        paidAt: paid ? FieldValue.serverTimestamp() : null,
+        amountDue,
+        userCount,
+        comments,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return { ok: true };
+  }
+);
 
 exports.runExpiryReminders = onSchedule(
   {

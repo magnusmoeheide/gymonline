@@ -35,9 +35,8 @@ export default function Orders() {
   }, [gymId]);
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Orders</h2>
-      {busy ? <div>Loading…</div> : null}
 
       <table
         width="100%"
@@ -68,7 +67,7 @@ export default function Orders() {
           {!orders.length ? (
             <tr>
               <td colSpan="4" style={{ opacity: 0.7 }}>
-                No orders yet (or missing index for orderBy).
+                {busy ? "Loading…" : "No orders yet."}
               </td>
             </tr>
           ) : null}

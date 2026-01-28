@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import RequireAuth from "../guards/RequireAuth";
 import RequireRole from "../guards/RequireRole";
 import Layout from "../../components/Layout";
@@ -9,8 +9,19 @@ import Plans from "../../pages/admin/Plans";
 import Products from "../../pages/admin/Products";
 import Orders from "../../pages/admin/Orders";
 import Settings from "../../pages/admin/Settings";
+import { useAuth } from "../../context/AuthContext";
 
 export default function AdminRoutes() {
+  const params = useParams();
+  const slug = params?.slug ? String(params.slug) : "";
+  const { isSimulated, userDoc, loading } = useAuth();
+  const simIsMember = isSimulated && userDoc?.role === "MEMBER";
+  const simBase = slug ? `/g/${slug}` : userDoc?.gymSlug ? `/g/${userDoc.gymSlug}` : "";
+
+  if (!loading && simIsMember) {
+    return <Navigate to={simBase ? `${simBase}/app` : "/login"} replace />;
+  }
+
   return (
     <RequireAuth>
       <RequireRole allow={["SUPER_ADMIN", "GYM_ADMIN", "STAFF"]}>

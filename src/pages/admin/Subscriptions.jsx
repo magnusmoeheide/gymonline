@@ -88,6 +88,10 @@ function norm(s) {
     .toLowerCase();
 }
 
+function memberLabel(member) {
+  return member?.name || "Unknown member";
+}
+
 const FILTER_KEY = "admin_subscriptions_revenue_filter_v1";
 const MEMBER_FILTER_KEY = "admin_subscriptions_member_filter_v1";
 
@@ -550,8 +554,8 @@ export default function Subscriptions() {
   const filterMemberLabel = useMemo(() => {
     if (!memberFilterUserId) return "";
     const m = memberMap.get(memberFilterUserId);
-    if (!m) return memberFilterUserId;
-    return `${m.name || "Member"}${m.phoneE164 ? ` (${m.phoneE164})` : ""}`;
+    if (!m) return "Unknown member";
+    return `${memberLabel(m)}${m.phoneE164 ? ` (${m.phoneE164})` : ""}`;
   }, [memberFilterUserId, memberMap]);
 
   const filteredSubsSorted = useMemo(() => {
@@ -577,7 +581,7 @@ export default function Subscriptions() {
   }
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Subscriptions</h2>
 
       {/* Revenue filters */}
@@ -899,7 +903,7 @@ export default function Subscriptions() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              {memberMap.get(editSub.userId)?.name || editSub.userId} •{" "}
+              {memberLabel(memberMap.get(editSub.userId))} •{" "}
               {editSub.planName || editSub.planId}
             </div>
 
@@ -1107,7 +1111,7 @@ export default function Subscriptions() {
             const member = memberMap.get(s.userId);
             return (
               <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                <td>{member?.name || s.userId}</td>
+                <td>{memberLabel(member)}</td>
                 <td>{s.planName || s.planId}</td>
                 <td>{s.status}</td>
                 <td>{s.paymentStatus || "awaiting_payment"}</td>
@@ -1142,7 +1146,7 @@ export default function Subscriptions() {
           {!filteredSubsSorted.length ? (
             <tr>
               <td colSpan="8" style={{ opacity: 0.7 }}>
-                No subscriptions found.
+                {busy ? "Loading…" : "No subscriptions found."}
               </td>
             </tr>
           ) : null}

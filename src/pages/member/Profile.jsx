@@ -2,6 +2,10 @@ import { useAuth } from "../../context/AuthContext";
 
 export default function Profile() {
   const { user, userDoc } = useAuth();
+  const name =
+    userDoc?.name || userDoc?.fullName || userDoc?.displayName || user?.email;
+  const phone = userDoc?.phoneE164 || userDoc?.phone || user?.phoneNumber;
+  const role = userDoc?.role;
 
   return (
     <div>
@@ -10,13 +14,13 @@ export default function Profile() {
         Email: <b>{user?.email || "-"}</b>
       </div>
       <div>
-        Name: <b>{userDoc?.name || "-"}</b>
+        Name: <b>{name || "-"}</b>
       </div>
       <div>
-        Phone: <b>{userDoc?.phoneE164 || "-"}</b>
+        Phone: <b>{phone || "-"}</b>
       </div>
       <div>
-        Role: <b>{userDoc?.role || "-"}</b>
+        Role: <b>{role || "-"}</b>
       </div>
     </div>
   );

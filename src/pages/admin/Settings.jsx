@@ -1,14 +1,17 @@
 // src/pages/admin/Settings.jsx
 import { useEffect, useState } from "react";
 import { httpsCallable } from "firebase/functions";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
+import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { db } from "../../firebase/db";
 import { functions } from "../../firebase/functionsClient";
 import { useAuth } from "../../context/AuthContext";
+import { storage } from "../../firebase/storage";
 
 export default function Settings() {
   const { userDoc } = useAuth();
   const gymId = userDoc?.gymId;
+  const gymSlug = userDoc?.gymSlug || "";
 
   // templates (keep your placeholders)
   const [expiring7, setExpiring7] = useState(
@@ -31,6 +34,18 @@ export default function Settings() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminTempPassword, setAdminTempPassword] = useState("");
 
+  // login branding
+  const [loginLogoUrl, setLoginLogoUrl] = useState("");
+  const [loginText, setLoginText] = useState("");
+  const [brandingBusy, setBrandingBusy] = useState(false);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState("");
+
+  const [selfEmail, setSelfEmail] = useState("");
+  const [selfName, setSelfName] = useState("");
+  const [selfPhoneE164, setSelfPhoneE164] = useState("");
+  const [selfBusy, setSelfBusy] = useState(false);
+
   async function loadAdmins() {
     if (!gymId) return;
     setBusy(true);
@@ -52,6 +67,41 @@ export default function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gymId]);
 
+  useEffect(() => {
+    if (!gymId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "gyms", gymId));
+        if (!alive) return;
+        const data = snap?.exists?.() ? snap.data() : {};
+        setLoginLogoUrl(data?.loginLogoUrl || "");
+        setLoginText(data?.loginText || "");
+      } catch (e) {
+        console.error("Failed to load gym branding", e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [gymId]);
+
+  useEffect(() => {
+    setSelfEmail(userDoc?.email || "");
+    setSelfName(userDoc?.name || "");
+    setSelfPhoneE164(userDoc?.phoneE164 || "");
+  }, [userDoc?.email]);
+
+  useEffect(() => {
+    if (!logoFile) {
+      setLogoPreview("");
+      return;
+    }
+    const url = URL.createObjectURL(logoFile);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoFile]);
+
   async function addGymAdmin(e) {
     e.preventDefault();
     if (!gymId) return;
@@ -60,8 +110,8 @@ export default function Settings() {
     if (!adminPhoneE164.trim().startsWith("+"))
       return alert("Phone must be E.164 (+...)");
     if (!adminEmail.trim()) return alert("Email required");
-    if ((adminTempPassword || "").length < 8)
-      return alert("Temp password min 8 chars");
+    if ((adminTempPassword || "").length < 6)
+      return alert("Temp password min 6 chars");
 
     setBusy(true);
     try {
@@ -88,8 +138,68 @@ export default function Settings() {
     }
   }
 
+  async function saveBranding(e) {
+    e.preventDefault();
+    if (!gymId) return;
+    setBrandingBusy(true);
+    try {
+      let nextLogoUrl = loginLogoUrl.trim();
+
+      if (logoFile) {
+        const ext = logoFile.name.includes(".")
+          ? logoFile.name.split(".").pop()
+          : "png";
+        const fileRef = storageRef(
+          storage,
+          `gyms/${gymId}/branding/login-logo.${ext}`
+        );
+        await uploadBytes(fileRef, logoFile, {
+          contentType: logoFile.type || "image/png",
+        });
+        nextLogoUrl = await getDownloadURL(fileRef);
+      }
+
+      await updateDoc(doc(db, "gyms", gymId), {
+        loginLogoUrl: nextLogoUrl,
+        loginText: loginText.trim(),
+      });
+
+      setLoginLogoUrl(nextLogoUrl);
+      setLogoFile(null);
+      alert("Login branding saved");
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Failed to save branding");
+    } finally {
+      setBrandingBusy(false);
+    }
+  }
+
+  async function updateOwnEmail(e) {
+    e.preventDefault();
+    const next = String(selfEmail || "").trim().toLowerCase();
+    if (!next) return alert("Email required");
+    if (selfPhoneE164 && !selfPhoneE164.trim().startsWith("+"))
+      return alert("Phone must be E.164 (+...)");
+    setSelfBusy(true);
+    try {
+      const fn = httpsCallable(functions, "updateOwnProfile");
+      await fn({
+        email: next,
+        name: String(selfName || "").trim(),
+        phoneE164: String(selfPhoneE164 || "").trim(),
+      });
+      alert("Profile updated");
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Failed to update profile");
+    } finally {
+      setSelfBusy(false);
+    }
+  }
+
   return (
-    <div>
+    <div style={{ display: "grid", gap: 20 }}>
       <h2>Settings</h2>
 
       <div style={{ opacity: 0.8, marginBottom: 12 }}>
@@ -100,6 +210,30 @@ export default function Settings() {
         For now these templates are local placeholders. Next step is saving them
         to <code>gyms/{`{gymId}`}</code> and using them in the Twilio function.
       </p>
+
+      <div className="card" style={{ padding: 16, maxWidth: 520 }}>
+        <h3 style={{ marginTop: 0 }}>My account</h3>
+        <form onSubmit={updateOwnEmail} style={{ display: "grid", gap: 8 }}>
+          <input
+            placeholder="Your name"
+            value={selfName}
+            onChange={(e) => setSelfName(e.target.value)}
+          />
+          <input
+            placeholder="Your phone (E.164 +...)"
+            value={selfPhoneE164}
+            onChange={(e) => setSelfPhoneE164(e.target.value)}
+          />
+          <input
+            placeholder="Your email"
+            value={selfEmail}
+            onChange={(e) => setSelfEmail(e.target.value)}
+          />
+          <button className="btn-primary" disabled={selfBusy}>
+            {selfBusy ? "Saving…" : "Update email"}
+          </button>
+        </form>
+      </div>
 
       <div style={{ display: "grid", gap: 10, maxWidth: 820 }}>
         <label>
@@ -133,11 +267,95 @@ export default function Settings() {
 
       <hr style={{ margin: "20px 0" }} />
 
+      <h3>Login branding</h3>
+      <div style={{ fontSize: 13, opacity: 0.75 }}>
+        Login link:{" "}
+        {gymSlug ? (
+          <b>{`${window.location.origin}/g/${gymSlug}/login`}</b>
+        ) : (
+          <b>—</b>
+        )}
+      </div>
+
+      <form
+        onSubmit={saveBranding}
+        style={{ display: "grid", gap: 8, maxWidth: 600 }}
+      >
+        {loginLogoUrl ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: 10,
+              border: "1px solid #eee",
+              borderRadius: 10,
+              background: "#fafafa",
+            }}
+          >
+            <img
+              src={loginLogoUrl}
+              alt="Current logo"
+              style={{ height: 38, objectFit: "contain" }}
+            />
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Current logo
+            </div>
+          </div>
+        ) : null}
+
+        {logoPreview ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: 10,
+              border: "1px solid #eee",
+              borderRadius: 10,
+              background: "#fff",
+            }}
+          >
+            <img
+              src={logoPreview}
+              alt="New logo preview"
+              style={{ height: 38, objectFit: "contain" }}
+            />
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              New logo preview
+            </div>
+          </div>
+        ) : null}
+
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+        />
+        <textarea
+          rows={3}
+          placeholder="Login page text (optional)"
+          value={loginText}
+          onChange={(e) => setLoginText(e.target.value)}
+        />
+        <button className="btn-primary" disabled={brandingBusy}>
+          {brandingBusy ? "Saving…" : "Save branding"}
+        </button>
+      </form>
+
+      <hr style={{ margin: "20px 0" }} />
+
       <h3>Gym Admins</h3>
 
       <form
         onSubmit={addGymAdmin}
-        style={{ display: "grid", gap: 8, maxWidth: 520, marginBottom: 16 }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+          gap: 8,
+          marginBottom: 16,
+          alignItems: "center",
+        }}
       >
         <input
           placeholder="Full name"
@@ -153,16 +371,18 @@ export default function Settings() {
           placeholder="Email"
           value={adminEmail}
           onChange={(e) => setAdminEmail(e.target.value)}
+          name="gymadmin-create-email"
+          autoComplete="off"
         />
         <input
-          placeholder="Temp password (min 8 chars)"
+          placeholder="Temp password (min 6 chars)"
           value={adminTempPassword}
           onChange={(e) => setAdminTempPassword(e.target.value)}
+          autoComplete="new-password"
         />
         <button disabled={busy}>{busy ? "Saving…" : "Add gym admin"}</button>
       </form>
 
-      {busy ? <div>Loading…</div> : null}
 
       <table
         width="100%"
@@ -189,7 +409,7 @@ export default function Settings() {
           {!admins.length ? (
             <tr>
               <td colSpan="4" style={{ opacity: 0.7 }}>
-                No gym admins yet.
+                {busy ? "Loading…" : "No gym admins yet."}
               </td>
             </tr>
           ) : null}

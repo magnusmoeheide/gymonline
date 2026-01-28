@@ -63,6 +63,7 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if (isSignedIn() && uid == request.auth.uid)
+        || (isSignedIn() && resource.data.email == request.auth.token.email)
         || (isStaff() && resource.data.gymId == gymId())
         || isSuperAdmin();
 
@@ -94,6 +95,13 @@ service cloud.firestore {
       // ✅ SUPER_ADMIN now passes sameGym(...) via helper
       allow create, update: if isStaff() && sameGym(request.resource.data);
       allow delete: if isGymAdmin() && sameGymExisting();
+    }
+
+    // Superadmin payment tracking
+    match /gymPayments/{id} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
+      allow delete: if false;
     }
 
     match /products/{id} {
