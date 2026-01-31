@@ -4,14 +4,12 @@ import {
   collection,
   doc,
   getDocs,
-  query,
-  updateDoc,
+  serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
-import { httpsCallable } from "firebase/functions";
-import { functions } from "../../firebase/functionsClient";
 
 function fmtMonth(date) {
   const y = date.getFullYear();
@@ -56,6 +54,7 @@ export default function Payments() {
   const [payments, setPayments] = useState(new Map());
   const [month, setMonth] = useState(() => fmtMonth(new Date()));
   const [commentDrafts, setCommentDrafts] = useState({});
+  const [paymentDrafts, setPaymentDrafts] = useState({});
 
   useEffect(() => {
     if (realUserDoc?.role !== "SUPER_ADMIN") return;
@@ -111,6 +110,28 @@ export default function Payments() {
           : Math.round(userCount * perUserRate);
       const payDocId = `${g.id}_${normalizeMonth(month)}`;
       const pay = payments.get(payDocId) || {};
+      const rawCompedAmount = Number(pay.compedAmount) || 0;
+      const rawAmountPaid =
+        Number(pay.amountPaid) ||
+        (pay.paid ? Number(pay.amountDue || due) : 0);
+      const rawBalance =
+        Number(pay.balance) ||
+        Math.max(due - rawAmountPaid - rawCompedAmount, 0);
+      const status =
+        pay.status ||
+        (rawCompedAmount > 0
+          ? "comped"
+          : pay.paid
+          ? "paid"
+          : rawAmountPaid > 0 || rawBalance > 0
+          ? "partial"
+          : "unpaid");
+      const isComped = status === "comped";
+      const compedAmount = isComped
+        ? Number(pay.compedAmount) || Number(pay.amountDue) || due
+        : rawCompedAmount;
+      const amountPaid = isComped ? 0 : rawAmountPaid;
+      const balance = isComped ? 0 : rawBalance;
       return {
         gym: g,
         model,
@@ -121,6 +142,10 @@ export default function Payments() {
         payDocId,
         paid: !!pay.paid,
         comments: pay.comments || "",
+        amountPaid,
+        balance,
+        compedAmount,
+        status,
       };
     });
 
@@ -128,29 +153,78 @@ export default function Payments() {
     return list.filter((r) => r.userCount > 0);
   }, [gyms, subs, payments, month, range]);
 
-  async function togglePaid(r) {
-    const next = !r.paid;
+  function getDraft(r) {
+    const draft = paymentDrafts[r.payDocId] || {};
+    return {
+      status: draft.status || r.status || "unpaid",
+      amountPaid:
+        draft.amountPaid !== undefined ? Number(draft.amountPaid) || 0 : r.amountPaid,
+      balance:
+        draft.balance !== undefined ? Number(draft.balance) || 0 : r.balance,
+      compedAmount:
+        draft.compedAmount !== undefined ? Number(draft.compedAmount) || 0 : r.compedAmount,
+    };
+  }
+
+  async function savePayment(r) {
+    const draft = getDraft(r);
     const comment = String(commentDrafts[r.payDocId] || "").trim() || null;
-    const fn = httpsCallable(functions, "setGymPaymentStatus");
-    await fn({
-      gymId: r.gym.id,
-      month: normalizeMonth(month),
-      paid: next,
-      amountDue: r.due,
-      userCount: r.userCount,
-      comments: comment,
-    });
+    const paid = draft.status === "paid";
+    const due = Number(r.due) || 0;
+    let amountPaid = 0;
+    let balance = due;
+    let compedAmount = 0;
+
+    if (draft.status === "paid") {
+      amountPaid = due;
+      balance = 0;
+    } else if (draft.status === "partial") {
+      amountPaid = Math.max(draft.amountPaid, 0);
+      balance = Math.max(draft.balance, 0);
+    } else if (draft.status === "comped") {
+      compedAmount = Math.max(draft.compedAmount || due, 0);
+      balance = Math.max(due - compedAmount, 0);
+    }
+
+    const normalized = {
+      status: draft.status,
+      amountPaid,
+      balance,
+      compedAmount,
+    };
+    await setDoc(
+      doc(db, "gymPayments", `${r.gym.id}_${normalizeMonth(month)}`),
+      {
+        gymId: r.gym.id,
+        month: normalizeMonth(month),
+        paid,
+        paidAt: paid ? serverTimestamp() : null,
+        amountDue: r.due,
+        userCount: r.userCount,
+        comments: comment,
+        status: normalized.status,
+        amountPaid: normalized.amountPaid,
+        balance: normalized.balance,
+        compedAmount: normalized.compedAmount,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
     setPayments((prev) => {
       const n = new Map(prev);
       n.set(r.payDocId, {
         ...(n.get(r.payDocId) || {}),
         gymId: r.gym.id,
         month: normalizeMonth(month),
-        paid: next,
-        paidAt: next ? new Date() : null,
+        paid,
+        paidAt: paid ? new Date() : null,
         amountDue: r.due,
         userCount: r.userCount,
         comments: comment,
+        status: normalized.status,
+        amountPaid: normalized.amountPaid,
+        balance: normalized.balance,
+        compedAmount: normalized.compedAmount,
       });
       return n;
     });
@@ -172,6 +246,26 @@ export default function Payments() {
     );
   }
 
+  const revenue = useMemo(() => {
+    const totals = rows.reduce(
+      (acc, r) => {
+        const isComped = r.status === "comped";
+        const effectiveDue = isComped ? 0 : r.due;
+        const effectivePaid = isComped ? 0 : r.amountPaid || 0;
+        const effectiveBalance = isComped ? 0 : r.balance || 0;
+        acc.due += effectiveDue;
+        acc.paid += effectivePaid;
+        acc.balance += effectiveBalance;
+        acc.comped += r.compedAmount || 0;
+        return acc;
+      },
+      { due: 0, paid: 0, balance: 0, comped: 0 }
+    );
+    return totals;
+  }, [rows]);
+
+  const overviewReady = !busy && rows.length > 0;
+
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Payments</h2>
@@ -186,138 +280,244 @@ export default function Payments() {
         />
       </div>
 
-      <table
-        className="payments-table"
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Gym</th>
-            <th align="left">Billing</th>
-            <th align="left">Members</th>
-            <th align="left">Due</th>
-            <th align="left">Paid</th>
-          </tr>
-        </thead>
-        <tbody>
-          {!rows.length ? (
-            <tr>
-              <td colSpan="5" style={{ opacity: 0.7 }}>
-                {busy
-                  ? "Loading…"
-                  : error
-                  ? `Error: ${error}`
-                  : "No gyms found."}
-              </td>
+      {overviewReady ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 12,
+            background: "#fafafa",
+            border: "1px solid #eee",
+            padding: 12,
+            borderRadius: 8,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Due</div>
+            <div style={{ fontWeight: 700 }}>{revenue.due}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Paid</div>
+            <div style={{ fontWeight: 700 }}>{revenue.paid}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Outstanding</div>
+            <div style={{ fontWeight: 700 }}>{revenue.balance}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Comped</div>
+            <div style={{ fontWeight: 700 }}>{revenue.comped}</div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="table-scroll">
+        <table
+          className="payments-table"
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Gym</th>
+              <th align="left">Billing</th>
+              <th align="left">Members</th>
+              <th align="left">Paid</th>
+              <th align="left">Payment</th>
             </tr>
-          ) : (
-            rows.map((r) => (
-              <tr key={r.gym.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                <td>
-                  <div style={{ fontWeight: 700 }}>{r.gym.name}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>{r.gym.slug}</div>
-                </td>
-                <td>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "130px 130px 130px",
-                      gap: 8,
-                      alignItems: "center",
-                    }}
-                  >
-                    <select
-                      value={r.model}
-                      onChange={(e) =>
-                        saveBilling(r.gym.id, { billingModel: e.target.value })
-                      }
-                    >
-                      <option value="per_user">Per user</option>
-                      <option value="fixed">Fixed</option>
-                    </select>
-                    {r.model === "fixed" ? (
-                      <input
-                        placeholder="Fixed amount"
-                        value={r.fixedAmount}
-                        onChange={(e) =>
-                          setGyms((prev) =>
-                            prev.map((g) =>
-                              g.id === r.gym.id
-                                ? { ...g, fixedAmount: e.target.value }
-                                : g
-                            )
-                          )
-                        }
-                        style={{ maxWidth: 140 }}
-                      />
-                    ) : (
-                      <input
-                        placeholder="Per user rate"
-                        value={r.perUserRate}
-                        onChange={(e) =>
-                          setGyms((prev) =>
-                            prev.map((g) =>
-                              g.id === r.gym.id
-                                ? { ...g, perUserRate: e.target.value }
-                                : g
-                            )
-                          )
-                        }
-                        style={{ maxWidth: 130 }}
-                      />
-                    )}
-                    <button
-                      type="button"
-                      style={{
-                        padding: "8px 10px",
-                        fontSize: 13,
-                        minWidth: 130,
-                      }}
-                      onClick={() =>
-                        saveBilling(r.gym.id, {
-                          billingModel: r.model,
-                          perUserRate: Number(r.perUserRate) || 0,
-                          fixedAmount: Number(r.fixedAmount) || 0,
-                        })
-                      }
-                    >
-                      Update
-                    </button>
-                  </div>
-                </td>
-                <td>{r.userCount}</td>
-                <td>{r.due}</td>
-                <td>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto",
-                      gap: 8,
-                      alignItems: "center",
-                    }}
-                  >
-                    <input
-                      placeholder="Comments"
-                      value={commentDrafts[r.payDocId] ?? r.comments ?? ""}
-                      onChange={(e) =>
-                        setCommentDrafts((prev) => ({
-                          ...prev,
-                          [r.payDocId]: e.target.value,
-                        }))
-                      }
-                    />
-                    <button onClick={() => togglePaid(r)}>
-                      {r.paid ? "Paid" : "Mark paid"}
-                    </button>
-                  </div>
+          </thead>
+          <tbody>
+            {!rows.length ? (
+              <tr>
+                <td colSpan="5" style={{ opacity: 0.7 }}>
+                  {busy
+                    ? "Loading…"
+                    : error
+                    ? `Error: ${error}`
+                    : "No gyms found."}
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              rows.map((r) => (
+                <tr key={r.gym.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{r.gym.name}</div>
+                  </td>
+                  <td>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "120px 120px auto",
+                        gap: 6,
+                        alignItems: "center",
+                      }}
+                    >
+                      <select
+                        value={r.model}
+                        onChange={(e) =>
+                          saveBilling(r.gym.id, { billingModel: e.target.value })
+                        }
+                      >
+                        <option value="per_user">Per user</option>
+                        <option value="fixed">Fixed</option>
+                      </select>
+                      {r.model === "fixed" ? (
+                        <input
+                          placeholder="Fixed amount"
+                          value={r.fixedAmount}
+                          onChange={(e) =>
+                            setGyms((prev) =>
+                              prev.map((g) =>
+                                g.id === r.gym.id
+                                  ? { ...g, fixedAmount: e.target.value }
+                                  : g
+                              )
+                            )
+                          }
+                          style={{ maxWidth: 140 }}
+                        />
+                      ) : (
+                        <input
+                          placeholder="Per user rate"
+                          value={r.perUserRate}
+                          onChange={(e) =>
+                            setGyms((prev) =>
+                              prev.map((g) =>
+                                g.id === r.gym.id
+                                  ? { ...g, perUserRate: e.target.value }
+                                  : g
+                              )
+                            )
+                          }
+                          style={{ maxWidth: 130 }}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        style={{
+                          padding: "7px 10px",
+                          fontSize: 13,
+                          minWidth: 100,
+                        }}
+                        onClick={() =>
+                          saveBilling(r.gym.id, {
+                            billingModel: r.model,
+                            perUserRate: Number(r.perUserRate) || 0,
+                            fixedAmount: Number(r.fixedAmount) || 0,
+                          })
+                        }
+                      >
+                        Update
+                      </button>
+                    </div>
+                  </td>
+                  <td>{r.userCount}</td>
+                  <td>
+                    {r.status === "comped" ? "0/0" : `${r.amountPaid}/${r.due}`}
+                  </td>
+                  <td>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto",
+                        gap: 6,
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" }}>
+                          <select
+                            value={getDraft(r).status}
+                            onChange={(e) =>
+                              setPaymentDrafts((prev) => ({
+                                ...prev,
+                                [r.payDocId]: {
+                                  ...getDraft(r),
+                                  status: e.target.value,
+                                },
+                              }))
+                            }
+                            style={{ minWidth: 130 }}
+                          >
+                            <option value="unpaid">Unpaid</option>
+                            <option value="paid">Paid in full</option>
+                            <option value="partial">Partial</option>
+                            <option value="comped">Comped</option>
+                          </select>
+
+                          {getDraft(r).status === "partial" ? (
+                            <>
+                              <input
+                                placeholder="Amount paid"
+                                value={getDraft(r).amountPaid}
+                                onChange={(e) =>
+                                  setPaymentDrafts((prev) => ({
+                                    ...prev,
+                                    [r.payDocId]: {
+                                      ...getDraft(r),
+                                      amountPaid: e.target.value,
+                                    },
+                                  }))
+                                }
+                                style={{ width: 120 }}
+                              />
+                              <input
+                                placeholder="Outstanding"
+                                value={getDraft(r).balance}
+                                onChange={(e) =>
+                                  setPaymentDrafts((prev) => ({
+                                    ...prev,
+                                    [r.payDocId]: {
+                                      ...getDraft(r),
+                                      balance: e.target.value,
+                                    },
+                                  }))
+                                }
+                                style={{ width: 120 }}
+                              />
+                            </>
+                          ) : null}
+
+                          {getDraft(r).status === "comped" ? (
+                            <input
+                              placeholder="Comped amount"
+                              value={getDraft(r).compedAmount}
+                              onChange={(e) =>
+                                setPaymentDrafts((prev) => ({
+                                  ...prev,
+                                  [r.payDocId]: {
+                                    ...getDraft(r),
+                                    compedAmount: e.target.value,
+                                  },
+                                }))
+                              }
+                              style={{ width: 130 }}
+                            />
+                          ) : null}
+                        </div>
+
+                        <input
+                          placeholder="Comments"
+                          value={commentDrafts[r.payDocId] ?? r.comments ?? ""}
+                          onChange={(e) =>
+                            setCommentDrafts((prev) => ({
+                              ...prev,
+                              [r.payDocId]: e.target.value,
+                            }))
+                          }
+                          style={{ minWidth: 160 }}
+                        />
+                      </div>
+                      <button onClick={() => savePayment(r)}>Save</button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

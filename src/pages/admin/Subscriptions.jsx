@@ -40,18 +40,6 @@ function startOfDay(d) {
 function endOfDayExclusive(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
 }
-function startOfYear(y) {
-  return new Date(y, 0, 1);
-}
-function endOfYearExclusive(y) {
-  return new Date(y + 1, 0, 1);
-}
-function startOfMonth(y, m1) {
-  return new Date(y, m1 - 1, 1);
-}
-function endOfMonthExclusive(y, m1) {
-  return new Date(y, m1, 1);
-}
 function overlapMs(aStart, aEndExcl, bStart, bEndExcl) {
   const s = Math.max(aStart.getTime(), bStart.getTime());
   const e = Math.min(aEndExcl.getTime(), bEndExcl.getTime());
@@ -92,22 +80,7 @@ function memberLabel(member) {
   return member?.name || "Unknown member";
 }
 
-const FILTER_KEY = "admin_subscriptions_revenue_filter_v1";
 const MEMBER_FILTER_KEY = "admin_subscriptions_member_filter_v1";
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
 
 export default function Subscriptions() {
   const { userDoc } = useAuth();
@@ -166,39 +139,6 @@ export default function Subscriptions() {
       );
     } catch {}
   }, [memberQuery, memberFilterUserId]);
-
-  // ---- Revenue filter (saved in localStorage) ----
-  const now = useMemo(() => new Date(), []);
-  const defaultYear = now.getFullYear();
-  const defaultMonth = now.getMonth() + 1;
-
-  const [filterMode, setFilterMode] = useState("month"); // "month" | "year"
-  const [filterYear, setFilterYear] = useState(defaultYear);
-  const [filterMonth, setFilterMonth] = useState(defaultMonth);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(FILTER_KEY);
-      if (!raw) return;
-      const v = JSON.parse(raw);
-      if (v?.mode === "year" || v?.mode === "month") setFilterMode(v.mode);
-      if (Number.isFinite(v?.year)) setFilterYear(v.year);
-      if (Number.isFinite(v?.month)) setFilterMonth(v.month);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        FILTER_KEY,
-        JSON.stringify({
-          mode: filterMode,
-          year: filterYear,
-          month: filterMonth,
-        })
-      );
-    } catch {}
-  }, [filterMode, filterYear, filterMonth]);
 
   async function load() {
     if (!gymId) return;
@@ -486,57 +426,6 @@ export default function Subscriptions() {
     }
   }
 
-  // ---- Revenue calc (prorated by days for time_based plans) ----
-  const revenue = useMemo(() => {
-    const y = Number(filterYear) || defaultYear;
-    const m1 = Number(filterMonth) || defaultMonth;
-
-    const periodStart =
-      filterMode === "year" ? startOfYear(y) : startOfMonth(y, m1);
-    const periodEndExcl =
-      filterMode === "year"
-        ? endOfYearExclusive(y)
-        : endOfMonthExclusive(y, m1);
-
-    let total = 0;
-
-    for (const s of subs) {
-      // sessions removed: only time_based revenue
-      const price = Number(s.planPrice) || 0;
-      if (!price) continue;
-
-      const start = toDate(s.startDate);
-      const end = toDate(s.endDate);
-      if (!start || !end) continue;
-
-      const subStart = startOfDay(start);
-      const subEndExcl = endOfDayExclusive(end);
-
-      const subMs = Math.max(1, subEndExcl.getTime() - subStart.getTime());
-      const subDays = Math.max(1, Math.round(subMs / 86400000));
-
-      const overlap = overlapMs(
-        subStart,
-        subEndExcl,
-        periodStart,
-        periodEndExcl
-      );
-      if (overlap <= 0) continue;
-
-      const overlapDays = overlap / 86400000;
-      total += (price * overlapDays) / subDays;
-    }
-
-    return { total, periodStart, periodEndExcl };
-  }, [subs, filterMode, filterYear, filterMonth, defaultYear, defaultMonth]);
-
-  const yearOptions = useMemo(() => {
-    const cur = new Date().getFullYear();
-    const list = [];
-    for (let y = cur - 3; y <= cur + 1; y++) list.push(y);
-    return list;
-  }, []);
-
   // ---- Member typeahead matches (max 7) ----
   const memberMatches = useMemo(() => {
     const q = norm(memberQuery);
@@ -597,83 +486,6 @@ export default function Subscriptions() {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Subscriptions</h2>
-
-      {/* Revenue filters */}
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          padding: "12px 14px",
-          border: "1px solid #eee",
-          borderRadius: 10,
-          marginBottom: 14,
-          background: "#fff",
-        }}
-      >
-        <div style={{ fontWeight: 800 }}>
-          {filterMode === "month"
-            ? `Revenue for ${MONTH_NAMES[Math.max(0, Math.min(11, filterMonth - 1))]} ${filterYear}`
-            : `Revenue for the year of ${filterYear}`}{" "}
-          is:{" "}
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              padding: "2px 8px",
-              borderRadius: 999,
-              border: "1px solid rgba(15,118,110,.35)",
-              background: "rgba(15,118,110,.08)",
-              color: "#0f766e",
-              fontWeight: 900,
-            }}
-          >
-            {money(revenue.total)} {userDoc?.currency || ""}
-          </span>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 13, opacity: 0.8 }}>Mode</span>
-            <select
-              value={filterMode}
-              onChange={(e) => setFilterMode(e.target.value)}
-            >
-              <option value="month">Month</option>
-              <option value="year">Year</option>
-            </select>
-          </label>
-
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 13, opacity: 0.8 }}>Year</span>
-            <select
-              value={filterYear}
-              onChange={(e) => setFilterYear(Number(e.target.value))}
-            >
-              {yearOptions.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {filterMode === "month" ? (
-            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 13, opacity: 0.8 }}>Month</span>
-              <select
-                value={filterMonth}
-                onChange={(e) => setFilterMonth(Number(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {MONTH_NAMES[m - 1]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </div>
-      </div>
 
       {/* Assign button */}
       <div
@@ -834,48 +646,50 @@ export default function Subscriptions() {
                   Previous subscriptions
                 </div>
                 {previousSubs.length ? (
-                  <table
-                    width="100%"
-                    cellPadding="8"
-                    style={{ borderCollapse: "collapse" }}
-                  >
-                    <thead>
-                      <tr style={{ borderBottom: "1px solid #eee" }}>
-                        <th align="left">Plan</th>
-                        <th align="left">Status</th>
-                        <th align="left">Payment</th>
-                        <th align="left">Start</th>
-                        <th align="left">End</th>
-                        <th align="left">Price</th>
-                        <th align="left">Comments</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {previousSubs.slice(0, 10).map((s) => (
-                        <tr
-                          key={s.id}
-                          style={{ borderBottom: "1px solid #f3f3f3" }}
-                        >
-                          <td>{s.planName || s.planId}</td>
-                          <td>{s.status}</td>
-                          <td>{s.paymentStatus || "-"}</td>
-                          <td>{fmtDate(s.startDate)}</td>
-                          <td>{fmtDate(s.endDate)}</td>
-                          <td>{money(s.planPrice)}</td>
-                          <td
-                            style={{
-                              maxWidth: 260,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            {s.comments || "-"}
-                          </td>
+                  <div className="table-scroll">
+                    <table
+                      width="100%"
+                      cellPadding="8"
+                      style={{ borderCollapse: "collapse" }}
+                    >
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #eee" }}>
+                          <th align="left">Plan</th>
+                          <th align="left">Status</th>
+                          <th align="left">Payment</th>
+                          <th align="left">Start</th>
+                          <th align="left">End</th>
+                          <th align="left">Price</th>
+                          <th align="left">Comments</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {previousSubs.slice(0, 10).map((s) => (
+                          <tr
+                            key={s.id}
+                            style={{ borderBottom: "1px solid #f3f3f3" }}
+                          >
+                            <td>{s.planName || s.planId}</td>
+                            <td>{s.status}</td>
+                            <td>{s.paymentStatus || "-"}</td>
+                            <td>{fmtDate(s.startDate)}</td>
+                            <td>{fmtDate(s.endDate)}</td>
+                            <td>{money(s.planPrice)}</td>
+                            <td
+                              style={{
+                                maxWidth: 260,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {s.comments || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : (
                   <div style={{ fontSize: 13, opacity: 0.7 }}>
                     No previous subscriptions for this member.
@@ -1115,69 +929,71 @@ export default function Subscriptions() {
       </div>
 
       {/* Main table (filtered by memberFilterUserId) */}
-      <table
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Member</th>
-            <th align="left">Plan</th>
-            <th align="left">Status</th>
-            <th align="left">Payment</th>
-            <th align="left">Start</th>
-            <th align="left">End</th>
-            <th align="left">Comments</th>
-            <th align="left">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredSubsSorted.map((s) => {
-            const member = memberMap.get(s.userId);
-            return (
-              <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                <td>{memberLabel(member)}</td>
-                <td>{s.planName || s.planId}</td>
-                <td>{s.status}</td>
-                <td>{s.paymentStatus || "awaiting_payment"}</td>
-                <td>{fmtDate(s.startDate)}</td>
-                <td>{fmtDate(s.endDate)}</td>
-                <td
-                  style={{
-                    maxWidth: 260,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {s.comments || "—"}
-                </td>
-                <td style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button disabled={busy} onClick={() => openEdit(s)}>
-                    Edit
-                  </button>
-                  {s.status === "active" ? (
-                    <button disabled={busy} onClick={() => endSubscription(s)}>
-                      End
+      <div className="table-scroll">
+        <table
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Member</th>
+              <th align="left">Plan</th>
+              <th align="left">Status</th>
+              <th align="left">Payment</th>
+              <th align="left">Start</th>
+              <th align="left">End</th>
+              <th align="left">Comments</th>
+              <th align="left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredSubsSorted.map((s) => {
+              const member = memberMap.get(s.userId);
+              return (
+                <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                  <td>{memberLabel(member)}</td>
+                  <td>{s.planName || s.planId}</td>
+                  <td>{s.status}</td>
+                  <td>{s.paymentStatus || "awaiting_payment"}</td>
+                  <td>{fmtDate(s.startDate)}</td>
+                  <td>{fmtDate(s.endDate)}</td>
+                  <td
+                    style={{
+                      maxWidth: 260,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {s.comments || "—"}
+                  </td>
+                  <td style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button disabled={busy} onClick={() => openEdit(s)}>
+                      Edit
                     </button>
-                  ) : (
-                    <span style={{ opacity: 0.6 }}>—</span>
-                  )}
+                    {s.status === "active" ? (
+                      <button disabled={busy} onClick={() => endSubscription(s)}>
+                        End
+                      </button>
+                    ) : (
+                      <span style={{ opacity: 0.6 }}>—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+
+            {!filteredSubsSorted.length ? (
+              <tr>
+                <td colSpan="8" style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No subscriptions found."}
                 </td>
               </tr>
-            );
-          })}
-
-          {!filteredSubsSorted.length ? (
-            <tr>
-              <td colSpan="8" style={{ opacity: 0.7 }}>
-                {busy ? "Loading…" : "No subscriptions found."}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

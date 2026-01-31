@@ -71,6 +71,15 @@ function requireRole(caller, allowed) {
     throw new HttpsError("permission-denied", "Not allowed");
 }
 
+async function setUserClaims(uid, data) {
+  if (!uid || !data) return;
+  const claims = {
+    gymId: data.gymId || null,
+    role: data.role || null,
+  };
+  await admin.auth().setCustomUserClaims(uid, claims);
+}
+
 /**
  * ✅ Sync gyms/{gymId} -> gymsPublic/{gymId}
  * - gymsPublic is readable without auth (for login gym picker)
@@ -97,6 +106,9 @@ exports.syncGymToPublic = onDocumentWritten(
         slug: data.slug || data.subdomain || "",
         loginLogoUrl: data.loginLogoUrl || "",
         loginText: data.loginText || "",
+        websiteText: data.websiteText || "",
+        location: data.location || "",
+        openingHours: data.openingHours || "",
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -403,8 +415,210 @@ exports.createGymAndAdmin = onCall({ region: "us-central1" }, async (request) =>
 
   await batch.commit();
 
+  await setUserClaims(authUser.uid, {
+    gymId,
+    role: "GYM_ADMIN",
+  });
+
   return { ok: true, gymId, slug, adminUid: authUser.uid };
 });
+
+exports.updateGymDetails = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+
+    let gymId = String(caller.gymId || "").trim();
+    let gymSlug = String(caller.gymSlug || "").trim();
+
+    // Resolve gymId if caller has a reserved/global id (e.g. simulated user)
+    if (!gymId || gymId === "__global__") {
+      const reqGymId = String(request.data?.gymId || "").trim();
+      const slug = normalizeSlug(gymSlug || request.data?.slug || "");
+      if (reqGymId) {
+        gymId = reqGymId;
+        gymSlug = slug || gymSlug;
+      }
+      if (!slug)
+        throw new HttpsError(
+          "failed-precondition",
+          "Caller missing gymId/slug"
+        );
+      if (!gymId) {
+        const slugSnap = await db.doc(`slugs/${slug}`).get();
+        if (!slugSnap.exists)
+          throw new HttpsError("not-found", "Gym slug not found");
+        gymId = String(slugSnap.data()?.gymId || "").trim();
+      }
+      gymSlug = slug || gymSlug;
+    }
+
+    if (!gymId) throw new HttpsError("invalid-argument", "gymId required");
+
+    const nextName = String(request.data?.name || "").trim();
+    const nextSlugRaw = String(request.data?.slug || "").trim();
+    if (!nextName) throw new HttpsError("invalid-argument", "name required");
+    if (!nextSlugRaw) throw new HttpsError("invalid-argument", "slug required");
+
+    const nextSlug = normalizeSlug(nextSlugRaw);
+    if (!nextSlug) throw new HttpsError("invalid-argument", "slug required");
+
+    const gymRef = db.doc(`gyms/${gymId}`);
+    let gymSnap = await gymRef.get();
+    if (!gymSnap.exists && gymSlug) {
+      const slugSnap = await db.doc(`slugs/${normalizeSlug(gymSlug)}`).get();
+      if (slugSnap.exists) {
+        const resolved = String(slugSnap.data()?.gymId || "").trim();
+        if (resolved) {
+          gymId = resolved;
+          gymSnap = await db.doc(`gyms/${gymId}`).get();
+        }
+      }
+    }
+    if (!gymSnap.exists) throw new HttpsError("not-found", "Gym not found");
+
+    const prevSlug = String(gymSnap.data()?.slug || "").trim();
+
+    if (nextSlug !== prevSlug) {
+      const slugRef = db.doc(`slugs/${nextSlug}`);
+      const slugSnap = await slugRef.get();
+      if (slugSnap.exists && slugSnap.data()?.gymId !== gymId) {
+        throw new HttpsError("already-exists", "Slug already taken");
+      }
+
+      const batch = db.batch();
+      batch.set(slugRef, { gymId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+
+      if (prevSlug) {
+        const prevRef = db.doc(`slugs/${prevSlug}`);
+        const prevSnap = await prevRef.get();
+        if (prevSnap.exists && prevSnap.data()?.gymId === gymId) {
+          batch.delete(prevRef);
+        }
+      }
+
+      batch.update(gymRef, {
+        name: nextName,
+        slug: nextSlug,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      batch.set(
+        db.doc(`gymsPublic/${gymId}`),
+        {
+          name: nextName,
+          slug: nextSlug,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      await batch.commit();
+
+      // Update users' gymSlug in batches
+      const usersSnap = await db
+        .collection("users")
+        .where("gymId", "==", gymId)
+        .get();
+      const docs = usersSnap.docs;
+      const chunkSize = 450;
+      for (let i = 0; i < docs.length; i += chunkSize) {
+        const batch2 = db.batch();
+        docs.slice(i, i + chunkSize).forEach((d) => {
+          batch2.update(d.ref, {
+            gymSlug: nextSlug,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        });
+        await batch2.commit();
+      }
+    } else {
+      await gymRef.update({
+        name: nextName,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await db.doc(`gymsPublic/${gymId}`).set(
+        {
+          name: nextName,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
+    return { ok: true, gymId, slug: nextSlug };
+  }
+);
+
+exports.updateWebsiteContent = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+
+    let gymId = String(caller.gymId || "").trim();
+    let gymSlug = String(caller.gymSlug || "").trim();
+
+    if (!gymId || gymId === "__global__") {
+      const slug = normalizeSlug(gymSlug || request.data?.slug || "");
+      if (!slug)
+        throw new HttpsError(
+          "failed-precondition",
+          "Caller missing gymId/slug"
+        );
+      const slugSnap = await db.doc(`slugs/${slug}`).get();
+      if (!slugSnap.exists)
+        throw new HttpsError("not-found", "Gym slug not found");
+      gymId = String(slugSnap.data()?.gymId || "").trim();
+      gymSlug = slug;
+    }
+
+    if (!gymId) throw new HttpsError("invalid-argument", "gymId required");
+
+    const loginLogoUrl = String(request.data?.loginLogoUrl || "").trim();
+    const loginText = String(request.data?.loginText || "").trim();
+    const websiteText = String(request.data?.websiteText || "").trim();
+    const location = String(request.data?.location || "").trim();
+    const openingHours = String(request.data?.openingHours || "").trim();
+
+    const gymRef = db.doc(`gyms/${gymId}`);
+    const gymSnap = await gymRef.get();
+    if (!gymSnap.exists)
+      throw new HttpsError("not-found", "Gym not found");
+
+    const patch = {
+      loginLogoUrl: loginLogoUrl || null,
+      loginText: loginText || null,
+      websiteText: websiteText || null,
+      location: location || null,
+      openingHours: openingHours || null,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    await gymRef.update(patch);
+
+    await db.doc(`gymsPublic/${gymId}`).set(
+      {
+        loginLogoUrl: loginLogoUrl || null,
+        loginText: loginText || null,
+        websiteText: websiteText || null,
+        location: location || null,
+        openingHours: openingHours || null,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return { ok: true };
+  }
+);
 
 exports.createGymAdmin = onCall({ region: "us-central1" }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required");
@@ -467,6 +681,11 @@ exports.createGymAdmin = onCall({ region: "us-central1" }, async (request) => {
     status: "active",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await setUserClaims(authUser.uid, {
+    gymId: callerGymId,
+    role: "GYM_ADMIN",
   });
 
   // optional SMS
@@ -561,6 +780,11 @@ exports.createGymAdminForGym = onCall(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    await setUserClaims(authUser.uid, {
+      gymId,
+      role: "GYM_ADMIN",
+    });
+
     // optional SMS
     try {
       const client = await twilioClient();
@@ -622,6 +846,112 @@ exports.updateGymAdminEmail = onCall(
   }
 );
 
+exports.updateGymAdminPhone = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    const phoneE164 = String(request.data?.phoneE164 || "").trim();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+    if (!phoneE164.startsWith("+"))
+      throw new HttpsError("invalid-argument", "phoneE164 must be E.164 (+...)");
+
+    const userRef = db.doc(`users/${uid}`);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists)
+      throw new HttpsError("not-found", "User not found");
+    const data = userSnap.data() || {};
+    if (data.role !== "GYM_ADMIN") {
+      throw new HttpsError("failed-precondition", "User is not a GYM_ADMIN");
+    }
+
+    try {
+      await admin.auth().updateUser(uid, { phoneNumber: phoneE164 });
+    } catch (e) {
+      if (String(e?.code || "").includes("phone-number-already-exists")) {
+        throw new HttpsError("already-exists", "Phone already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to update auth");
+    }
+
+    await userRef.update({
+      phoneE164,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true };
+  }
+);
+
+exports.resetGymAdminPassword = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+
+    const userRef = db.doc(`users/${uid}`);
+    const snap = await userRef.get();
+    if (!snap.exists) throw new HttpsError("not-found", "User not found");
+    const data = snap.data() || {};
+    if (data.role !== "GYM_ADMIN") {
+      throw new HttpsError("failed-precondition", "User is not a GYM_ADMIN");
+    }
+    const email = String(data.email || "").trim().toLowerCase();
+    if (!email) throw new HttpsError("failed-precondition", "Email not set");
+
+    let resetLink = null;
+    try {
+      resetLink = await admin.auth().generatePasswordResetLink(email);
+    } catch (e) {
+      throw new HttpsError("internal", e?.message || "Failed to reset password");
+    }
+
+    return { ok: true, resetLink };
+  }
+);
+
+exports.deleteGymAdmin = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+
+    const userRef = db.doc(`users/${uid}`);
+    const snap = await userRef.get();
+    if (!snap.exists) throw new HttpsError("not-found", "User not found");
+    const data = snap.data() || {};
+    if (data.role !== "GYM_ADMIN") {
+      throw new HttpsError("failed-precondition", "User is not a GYM_ADMIN");
+    }
+
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (e) {
+      throw new HttpsError("internal", e?.message || "Failed to delete auth");
+    }
+
+    await userRef.delete().catch(() => {});
+    return { ok: true };
+  }
+);
+
 exports.createSuperAdmin = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -668,7 +998,31 @@ exports.createSuperAdmin = onCall(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    await setUserClaims(authUser.uid, {
+      gymId: "__global__",
+      role: "SUPER_ADMIN",
+    });
+
     return { ok: true, uid: authUser.uid };
+  }
+);
+
+exports.syncAuthClaims = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    if (!caller?.role || !caller?.gymId)
+      throw new HttpsError("failed-precondition", "Missing user profile");
+
+    await setUserClaims(request.auth.uid, {
+      gymId: caller.gymId,
+      role: caller.role,
+    });
+
+    return { ok: true };
   }
 );
 
@@ -765,6 +1119,10 @@ exports.setGymPaymentStatus = onCall(
     const amountDue = Number(request.data?.amountDue) || 0;
     const userCount = Number(request.data?.userCount) || 0;
     const comments = String(request.data?.comments || "").trim() || null;
+    const status = String(request.data?.status || "").trim() || null;
+    const amountPaid = Number(request.data?.amountPaid) || 0;
+    const balance = Number(request.data?.balance) || 0;
+    const compedAmount = Number(request.data?.compedAmount) || 0;
 
     if (!gymId) throw new HttpsError("invalid-argument", "gymId required");
     if (!month) throw new HttpsError("invalid-argument", "month required");
@@ -783,6 +1141,10 @@ exports.setGymPaymentStatus = onCall(
         amountDue,
         userCount,
         comments,
+        status,
+        amountPaid,
+        balance,
+        compedAmount,
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }

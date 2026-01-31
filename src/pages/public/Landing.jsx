@@ -94,7 +94,7 @@ export default function Landing() {
                 letterSpacing: "-0.02em",
               }}
             >
-              GymOnline
+              Onlinegym
             </div>
           </div>
           <div
@@ -156,7 +156,7 @@ export default function Landing() {
               Run your gym like a business — not a spreadsheet.
             </div>
             <div style={{ fontSize: 16, opacity: 0.8, lineHeight: 1.6 }}>
-              GymOnline gives you a full online system for member control,
+              Onlinegym gives you a full online system for member control,
               active subscriptions, recurring M‑Pesa payments, and automated
               reminders that keep revenue consistent.
             </div>
@@ -477,7 +477,7 @@ export default function Landing() {
             }}
           >
             <div style={{ fontWeight: 900, marginBottom: 8 }}>
-              Why gyms choose GymOnline
+              Why gyms choose Onlinegym
             </div>
             <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 12 }}>
               Replace scattered spreadsheets with a clean system built for gym
@@ -546,7 +546,7 @@ export default function Landing() {
             opacity: 0.7,
           }}
         >
-          <div>© {new Date().getFullYear()} GymOnline</div>
+          <div>© {new Date().getFullYear()} Onlinegym</div>
           <div>Payments • Subscriptions • Marketing • Members</div>
         </footer>
       </div>

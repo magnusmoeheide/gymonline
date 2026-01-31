@@ -46,6 +46,36 @@ table th, table td{
   vertical-align: top;
 }
 
+/* Prevent tables from overflowing viewport */
+table{
+  width: 100%;
+  max-width: 100%;
+}
+
+.table-scroll{
+  max-width: 100%;
+  max-height: 100vh;
+  overflow: auto;
+}
+.table-fixed{
+  width: 100%;
+  table-layout: fixed;
+}
+.table-fixed th,
+.table-fixed td{
+  word-break: break-word;
+}
+
+.table-truncate td{
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-truncate td:hover{
+  white-space: normal;
+}
+
 table button,
 table input,
 table select{

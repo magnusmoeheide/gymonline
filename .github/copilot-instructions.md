@@ -5,7 +5,7 @@ Quick overview
 
 - Frontend: React (Vite) single-page app — entry at `src/main.jsx`, routes in `src/app/routes/*`.
 - Backend: Firebase (Firestore + Auth) with Cloud Functions in `functions/` (region: us-central1).
-- Important: client Firestore DB id and functions Firestore DB id must match (`gymonline-db`). See [src/firebase/db.js](src/firebase/db.js) and [functions/index.js](functions/index.js).
+- Important: client Firestore DB id and functions Firestore DB id must match (`onlinegym-db`). See [src/firebase/db.js](src/firebase/db.js) and [functions/index.js](functions/index.js).
 
 Key files to inspect
 
@@ -20,7 +20,7 @@ Architecture & data-flow notes
 - Auth-first client pattern: `AuthContext` subscribes to Firebase Auth (no Firestore listeners there), then fetches `users/{uid}` and optional `gyms/{gymId}` docs. Preserve this separation when changing auth logic.
 - Simulation: Admins can simulate another user by storing `SIMULATED_USER_ID` in localStorage (see `SIM_KEY` in `AuthContext`). Tests or UI changes that touch simulation should read/write that key.
 - Gym identity: the app uses both `gymId` (real firestore doc id) and `gymSlug` (human slug). There is an explicit `slugs/{slug}` mapping; functions handle both forms. When updating membership or slug logic, search `functions/index.js` for `slug`/`slugs` usage.
-- Firestore DB id: both client and functions initialize Firestore with the literal id `gymonline-db`. If you change the DB identifier, update both [src/firebase/db.js](src/firebase/db.js) and [functions/index.js](functions/index.js).
+- Firestore DB id: both client and functions initialize Firestore with the literal id `onlinegym-db`. If you change the DB identifier, update both [src/firebase/db.js](src/firebase/db.js) and [functions/index.js](functions/index.js).
 - Functions region: client calls functions using `us-central1` (see [src/firebase/functionsClient.js](src/firebase/functionsClient.js)). Keep region consistent when deploying.
 
 Developer workflows & commands
@@ -46,7 +46,7 @@ Environment & secrets
 What to watch for when editing
 
 - Keep the AuthContext load sequence intact to avoid race conditions.
-- Ensure `gymonline-db` ID consistency between client and functions.
+- Ensure `onlinegym-db` ID consistency between client and functions.
 - Keep functions region and `getFunctions(app, "us-central1")` aligned.
 - When touching user roles or permissions, update both client-side role checks and server `requireRole`/`assertCallerGym` guards in [functions/index.js](functions/index.js).
 

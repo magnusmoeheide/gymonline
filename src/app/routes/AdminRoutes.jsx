@@ -5,10 +5,13 @@ import Layout from "../../components/Layout";
 import Overview from "../../pages/admin/Overview";
 import Members from "../../pages/admin/Members";
 import Subscriptions from "../../pages/admin/Subscriptions";
+import Revenue from "../../pages/admin/Revenue";
 import Plans from "../../pages/admin/Plans";
 import Products from "../../pages/admin/Products";
 import Orders from "../../pages/admin/Orders";
 import Settings from "../../pages/admin/Settings";
+import Website from "../../pages/admin/Website";
+import Communication from "../../pages/admin/Communication";
 import { useAuth } from "../../context/AuthContext";
 
 export default function AdminRoutes() {
@@ -30,9 +33,12 @@ export default function AdminRoutes() {
             <Route index element={<Overview />} />
             <Route path="members" element={<Members />} />
             <Route path="subscriptions" element={<Subscriptions />} />
+            <Route path="revenue" element={<Revenue />} />
             <Route path="plans" element={<Plans />} />
             <Route path="products" element={<Products />} />
             <Route path="orders" element={<Orders />} />
+            <Route path="website" element={<Website />} />
+            <Route path="communication" element={<Communication />} />
             <Route path="settings" element={<Settings />} />
           </Routes>
         </Layout>

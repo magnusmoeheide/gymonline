@@ -20,6 +20,7 @@ export default function Plans() {
 
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
 
   const [name, setName] = useState("");
   const [type, setType] = useState("time_based");
@@ -79,6 +80,7 @@ export default function Plans() {
       await addDoc(collection(db, "plans"), data);
       setName("");
       setPrice("");
+      setShowAdd(false);
       await load();
     } catch (e2) {
       console.error(e2);
@@ -114,91 +116,165 @@ export default function Plans() {
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
-      <h2>Plans (Bundles)</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h2 style={{ margin: 0 }}>Plans (Bundles)</h2>
+        <button type="button" onClick={() => setShowAdd(true)} disabled={busy}>
+          Create plan
+        </button>
+      </div>
 
-      <form
-        onSubmit={createPlan}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: 8,
-          marginBottom: 16,
-          alignItems: "center",
-        }}
-      >
-        <input
-          placeholder="Plan name (e.g., Monthly)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <select value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="time_based">Time-based</option>
-          <option value="session_pack">Session pack</option>
-        </select>
+      <div className="table-scroll">
+        <table
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Name</th>
+              <th align="left">Type</th>
+              <th align="left">Price</th>
+              <th align="left">Active</th>
+              <th align="left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map((p) => (
+              <tr key={p.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                <td>{p.name}</td>
+                <td>{p.type}</td>
+                <td>{p.price}</td>
+                <td>{String(!!p.isActive)}</td>
+                <td>
+                  <button onClick={() => toggleActive(p)} disabled={busy}>
+                    {p.isActive ? "Disable" : "Enable"}
+                  </button>{" "}
+                  <button onClick={() => remove(p)} disabled={busy}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!plans.length ? (
+              <tr>
+                <td colSpan="5" style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No plans yet."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
 
-        <input
-          placeholder="Price"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-        />
+      {showAdd ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAdd(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>Create plan</div>
+            <form
+              onSubmit={createPlan}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Plan name</span>
+                <input
+                  placeholder="Plan name (e.g., Monthly)"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Type</span>
+                <select value={type} onChange={(e) => setType(e.target.value)}>
+                  <option value="time_based">Time-based</option>
+                  <option value="session_pack">Session pack</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Price</span>
+                <input
+                  placeholder="Price"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                />
+              </label>
 
-        {type === "time_based" ? (
-          <input
-            placeholder="Duration days (e.g., 30)"
-            value={durationDays}
-            onChange={(e) => setDurationDays(e.target.value)}
-          />
-        ) : (
-          <input
-            placeholder="Total sessions (e.g., 10)"
-            value={sessionsTotal}
-            onChange={(e) => setSessionsTotal(e.target.value)}
-          />
-        )}
+              {type === "time_based" ? (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.7 }}>
+                    Duration (days)
+                  </span>
+                  <input
+                    placeholder="Duration days (e.g., 30)"
+                    value={durationDays}
+                    onChange={(e) => setDurationDays(e.target.value)}
+                  />
+                </label>
+              ) : (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.7 }}>
+                    Total sessions
+                  </span>
+                  <input
+                    placeholder="Total sessions (e.g., 10)"
+                    value={sessionsTotal}
+                    onChange={(e) => setSessionsTotal(e.target.value)}
+                  />
+                </label>
+              )}
 
-        <button disabled={busy}>{busy ? "Saving…" : "Create plan"}</button>
-      </form>
-
-      <table
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Name</th>
-            <th align="left">Type</th>
-            <th align="left">Price</th>
-            <th align="left">Active</th>
-            <th align="left">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {plans.map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-              <td>{p.name}</td>
-              <td>{p.type}</td>
-              <td>{p.price}</td>
-              <td>{String(!!p.isActive)}</td>
-              <td>
-                <button onClick={() => toggleActive(p)} disabled={busy}>
-                  {p.isActive ? "Disable" : "Enable"}
-                </button>{" "}
-                <button onClick={() => remove(p)} disabled={busy}>
-                  Delete
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button disabled={busy} type="submit">
+                  {busy ? "Saving…" : "Create plan"}
                 </button>
-              </td>
-            </tr>
-          ))}
-          {!plans.length ? (
-            <tr>
-              <td colSpan="5" style={{ opacity: 0.7 }}>
-                {busy ? "Loading…" : "No plans yet."}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

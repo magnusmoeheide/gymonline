@@ -9,6 +9,7 @@ export default function SuperAdminSettings() {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,6 +57,7 @@ export default function SuperAdminSettings() {
         setEmail("");
         setPhoneE164("");
         setPassword("");
+        setShowAdd(false);
         await load();
       } catch (err) {
         console.error(err);
@@ -88,91 +90,161 @@ export default function SuperAdminSettings() {
 
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
-      <h2>Superadmin Settings</h2>
-
-      <div className="card" style={{ padding: 16 }}>
-        <h3 style={{ marginTop: 0 }}>Add superadmin</h3>
-        <form
-          onSubmit={addSuperAdmin}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          <input
-            placeholder="Full name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <input
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            name="superadmin-create-email"
-            autoComplete="off"
-          />
-          <input
-            placeholder="Phone (E.164 +...)"
-            value={phoneE164}
-            onChange={(e) => setPhoneE164(e.target.value)}
-          />
-          <input
-            placeholder="Temp password (min 6 chars)"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-          />
+      <div style={{ display: "grid", gap: 10 }}>
+        <h2 style={{ margin: 0 }}>Superadmin Settings</h2>
+        <div>
           <button
+            type="button"
             className="btn-primary"
+            onClick={() => setShowAdd(true)}
             disabled={saving}
           >
-            {saving ? "Saving…" : "Add superadmin"}
+            Add superadmin
           </button>
-        </form>
+        </div>
       </div>
 
       <div className="card" style={{ padding: 16 }}>
         <h3 style={{ marginTop: 0 }}>All superadmins</h3>
-        <table width="100%" cellPadding="8" style={{ borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #eee" }}>
-              <th align="left">Name</th>
-              <th align="left">Email</th>
-              <th align="left">Phone</th>
-              <th align="left">Status</th>
-              <th align="left">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {admins.map((a) => (
-              <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                <td>{a.name || "-"}</td>
-                <td>{a.email || "-"}</td>
-                <td>{a.phoneE164 || "-"}</td>
-                <td>{a.status || "active"}</td>
-                <td>
-                  <button
-                    onClick={() => deleteSuperAdmin(a.id)}
-                    disabled={saving}
-                  >
-                    Delete
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table width="100%" cellPadding="8" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #eee" }}>
+                <th align="left">Name</th>
+                <th align="left">Email</th>
+                <th align="left">Phone</th>
+                <th align="left">Status</th>
+                <th align="left">Actions</th>
               </tr>
-            ))}
-            {!admins.length ? (
-              <tr>
-                <td colSpan="5" style={{ opacity: 0.7 }}>
-                  {loading ? "Loading…" : "No superadmins found."}
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {admins.map((a) => (
+                <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                  <td>{a.name || "-"}</td>
+                  <td>{a.email || "-"}</td>
+                  <td>{a.phoneE164 || "-"}</td>
+                  <td>{a.status || "active"}</td>
+                  <td>
+                    <button
+                      onClick={() => deleteSuperAdmin(a.id)}
+                      disabled={saving}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!admins.length ? (
+                <tr>
+                  <td colSpan="5" style={{ opacity: 0.7 }}>
+                    {loading ? "Loading…" : "No superadmins found."}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      {showAdd ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAdd(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>Add superadmin</div>
+            <form
+              onSubmit={addSuperAdmin}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Full name</span>
+                <input
+                  placeholder="Full name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
+                <input
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  name="superadmin-create-email"
+                  autoComplete="off"
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Phone (E.164)</span>
+                <input
+                  placeholder="Phone (E.164 +...)"
+                  value={phoneE164}
+                  onChange={(e) => setPhoneE164(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Temp password
+                </span>
+                <input
+                  placeholder="Temp password (min 6 chars)"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button className="btn-primary" disabled={saving} type="submit">
+                  {saving ? "Saving…" : "Add superadmin"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

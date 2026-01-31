@@ -20,6 +20,24 @@ const normalizeEmail = (v) =>
 const normalizePhone = (v) => String(v || "").trim();
 const normalizeName = (v) => String(v || "").trim();
 
+function toDate(ts) {
+  if (!ts) return null;
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDate(ts) {
+  if (!ts) return "-";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return Number.isNaN(d.getTime()) ? "-" : d.toISOString().slice(0, 10);
+}
+
+function norm(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase();
+}
+
 export default function Members() {
   const { userDoc } = useAuth();
   const gymId = userDoc?.gymId;
@@ -27,10 +45,16 @@ export default function Members() {
   const [members, setMembers] = useState([]);
   const [subs, setSubs] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [memberQuery, setMemberQuery] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [showMemberDropdown, setShowMemberDropdown] = useState(false);
 
   // create
+  const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState("");
   const [countryCode, setCountryCode] = useState("+254");
+  const [countryCodeCustom, setCountryCodeCustom] = useState("");
+  const isCustomCountryCode = countryCode === "CUSTOM";
   const [phoneLocal, setPhoneLocal] = useState("");
   const [email, setEmail] = useState("");
   const [comments, setComments] = useState("");
@@ -38,6 +62,7 @@ export default function Members() {
 
   // edit
   const [editingId, setEditingId] = useState("");
+  const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState(""); // display only; not editable by default
@@ -49,6 +74,79 @@ export default function Members() {
     members.forEach((x) => m.set(x.id, x));
     return m;
   }, [members]);
+
+  const memberMatches = useMemo(() => {
+    const q = norm(memberQuery);
+    if (!q) return [];
+    return members
+      .map((m) => {
+        const name = String(m.name || "");
+        const phone = String(m.phoneE164 || "");
+        const email = String(m.email || "");
+        const hay = `${name} ${phone} ${email}`.toLowerCase();
+        const idx = hay.indexOf(q);
+        return { m, idx };
+      })
+      .filter((x) => x.idx >= 0)
+      .sort(
+        (a, b) =>
+          a.idx - b.idx ||
+          String(a.m.name || "").localeCompare(String(b.m.name || ""))
+      )
+      .slice(0, 7)
+      .map((x) => x.m);
+  }, [members, memberQuery]);
+
+  const selectedMember = useMemo(
+    () => members.find((m) => m.id === selectedMemberId) || null,
+    [members, selectedMemberId]
+  );
+
+  const selectedSubs = useMemo(() => {
+    if (!selectedMemberId) return [];
+    const list = subs.filter((s) => s.userId === selectedMemberId);
+    list.sort((a, b) => {
+      const ad = a.startDate?.toDate ? a.startDate.toDate() : new Date(0);
+      const bd = b.startDate?.toDate ? b.startDate.toDate() : new Date(0);
+      return bd.getTime() - ad.getTime();
+    });
+    return list;
+  }, [subs, selectedMemberId]);
+
+  const activeSub = useMemo(() => {
+    const now = new Date();
+    return (
+      selectedSubs.find((s) => {
+        if (s.status !== "active") return false;
+        const start = toDate(s.startDate);
+        const end = toDate(s.endDate);
+        if (start && start > now) return false;
+        return end ? end >= now : true;
+      }) || null
+    );
+  }, [selectedSubs]);
+
+  const memberStatusBorder = useMemo(() => {
+    if (!selectedMember) return "1px solid #eee";
+    if (!activeSub) return "2px solid #ef4444";
+    if (activeSub.paymentStatus === "awaiting_payment")
+      return "2px solid #f59e0b";
+    return "2px solid #16a34a";
+  }, [selectedMember, activeSub]);
+
+  const memberStatusBadge = useMemo(() => {
+    if (!selectedMember) return null;
+    if (!activeSub) {
+      return { text: "Inactive", bg: "#fee2e2", color: "#991b1b" };
+    }
+    if (activeSub.paymentStatus === "awaiting_payment") {
+      return { text: "Awaiting payment", bg: "#ffedd5", color: "#9a3412" };
+    }
+    if (activeSub.paymentStatus === "comped") {
+      return { text: "Comped", bg: "#e0f2fe", color: "#075985" };
+    }
+    return { text: "Paid", bg: "#dcfce7", color: "#166534" };
+  }, [selectedMember, activeSub]);
 
   const memberSubStatus = useMemo(() => {
     const now = new Date();
@@ -104,12 +202,18 @@ export default function Members() {
     const em = normalizeEmail(email);
     const rawPhone = normalizePhone(phoneLocal);
     const phoneDigits = rawPhone.replace(/\D/g, "");
-    const phoneOk =
-      !phoneDigits ||
-      (countryCode === "+254"
-        ? phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0])
-        : phoneDigits.length >= 6);
-    const phoneE164 = phoneDigits ? `${countryCode}${phoneDigits}` : "";
+      const countryCodeValue = isCustomCountryCode
+        ? countryCodeCustom.trim()
+        : countryCode;
+      const phoneOk =
+        !phoneDigits ||
+        (countryCodeValue === "+254"
+          ? phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0])
+          : phoneDigits.length >= 6);
+      const phoneE164 = phoneDigits ? `${countryCodeValue}${phoneDigits}` : "";
+      if (isCustomCountryCode && phoneDigits && !countryCodeValue.startsWith("+")) {
+        return alert("Custom country code must start with +");
+      }
 
     if (!n) return alert("Name required");
     if (!em && !phoneDigits) return alert("Email or phone required");
@@ -136,6 +240,9 @@ export default function Members() {
       setEmail("");
       setComments("");
       setSendWelcomeSms(true);
+      setCountryCode("+254");
+      setCountryCodeCustom("");
+      setShowAdd(false);
       await load();
     } catch (err) {
       console.error(err);
@@ -155,6 +262,7 @@ export default function Members() {
     setEditEmail(m.email || "");
     setEditComments(m.comments || "");
     setEditStatus(m.status || "active");
+    setShowEdit(true);
   }
 
   function cancelEdit() {
@@ -164,6 +272,7 @@ export default function Members() {
     setEditEmail("");
     setEditComments("");
     setEditStatus("active");
+    setShowEdit(false);
   }
 
   async function saveEdit() {
@@ -204,193 +313,492 @@ export default function Members() {
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
-      <h2>Members</h2>
-
-      <form
-        onSubmit={addMember}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1.1fr 0.6fr 1fr 1.1fr 1.2fr 0.9fr 0.8fr",
-          gap: 8,
-          marginBottom: 16,
-          padding: 12,
-          border: "1px solid #eee",
-          borderRadius: 10,
-          background: "#fff",
-          alignItems: "center",
-        }}
-      >
-        <input
-          placeholder="Full name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <select
-          value={countryCode}
-          onChange={(e) => setCountryCode(e.target.value)}
-        >
-          <option value="+254">Kenya (+254)</option>
-          <option value="+255">Tanzania (+255)</option>
-          <option value="+256">Uganda (+256)</option>
-          <option value="+250">Rwanda (+250)</option>
-          <option value="+257">Burundi (+257)</option>
-          <option value="+251">Ethiopia (+251)</option>
-        </select>
-        <input
-          placeholder="Phone (e.g. 712345678)"
-          value={phoneLocal}
-          onChange={(e) => setPhoneLocal(e.target.value)}
-        />
-        <input
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <textarea
-          rows={1}
-          placeholder="Comments"
-          value={comments}
-          onChange={(e) => setComments(e.target.value)}
-        />
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={sendWelcomeSms}
-            onChange={(e) => setSendWelcomeSms(e.target.checked)}
-          />
-          <span style={{ fontSize: 12, opacity: 0.8 }}>
-            Send welcome SMS
-          </span>
-        </label>
-        <button disabled={busy}>
-          {busy ? "Saving…" : "Add member"}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h2 style={{ margin: 0 }}>Members</h2>
+        <button type="button" onClick={() => setShowAdd(true)} disabled={busy}>
+          Add member
         </button>
-      </form>
+      </div>
 
-      <table
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Name</th>
-            <th align="left">Phone</th>
-            <th align="left">Email</th>
-            <th align="left">Status</th>
-            <th align="left">Subscription</th>
-            <th align="left">Comments</th>
-            <th align="left">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {members.map((m) => {
-            const isEditing = editingId === m.id;
+      <div>
+        <h3>Member lookup</h3>
 
+        <div style={{ display: "flex", gap: 8, alignItems: "center", maxWidth: 620 }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <input
+              placeholder="Search member name / phone / email…"
+              value={memberQuery}
+              onChange={(e) => {
+                setMemberQuery(e.target.value);
+                setShowMemberDropdown(true);
+              }}
+              onFocus={() => setShowMemberDropdown(true)}
+              onBlur={() => setTimeout(() => setShowMemberDropdown(false), 120)}
+            />
+
+            {showMemberDropdown && memberMatches.length ? (
+              <div
+                style={{
+                  position: "absolute",
+                  zIndex: 10,
+                  left: 0,
+                  right: 0,
+                  marginTop: 6,
+                  background: "#fff",
+                  border: "1px solid #eee",
+                  borderRadius: 10,
+                  boxShadow: "0 12px 30px rgba(0,0,0,.08)",
+                  overflow: "hidden",
+                }}
+              >
+                {memberMatches.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSelectedMemberId(m.id);
+                      setMemberQuery(m.name || "");
+                      setShowMemberDropdown(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 650 }}>{m.name || "Unnamed"}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                      {m.phoneE164 || "—"} {m.email ? `• ${m.email}` : ""}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setMemberQuery("");
+              setSelectedMemberId("");
+              setShowMemberDropdown(false);
+            }}
+            disabled={busy}
+          >
+            Clear
+          </button>
+        </div>
+
+        {selectedMember ? (
+          <div style={{ marginTop: 14, maxWidth: 720, display: "grid", gap: 12 }}>
+            <div
+              style={{
+                padding: 12,
+                border: memberStatusBorder,
+                borderRadius: 12,
+                background: "#fff",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <div style={{ fontWeight: 700 }}>
+                  {selectedMember.name || "Member"} •{" "}
+                  {selectedMember.phoneE164 || "—"}
+                </div>
+                {memberStatusBadge ? (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: memberStatusBadge.bg,
+                      color: memberStatusBadge.color,
+                    }}
+                  >
+                    {memberStatusBadge.text}
+                  </span>
+                ) : null}
+              </div>
+
+              {activeSub ? (
+                <div style={{ marginBottom: 4 }}>
+                  Active subscription — {activeSub.planName || activeSub.planId}{" "}
+                  until {fmtDate(activeSub.endDate)}
+                </div>
+              ) : (
+                <div style={{ opacity: 0.75 }}>No active subscription</div>
+              )}
+            </div>
+
+            <div className="card" style={{ padding: 12, background: "#f7f7f7" }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                Subscription history
+              </div>
+
+              {!selectedSubs.length ? (
+                <div style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No subscriptions found."}
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {selectedSubs.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.2fr 1fr 1fr 1fr",
+                        gap: 8,
+                        padding: 10,
+                        borderRadius: 10,
+                        border: "1px solid #f1f1f1",
+                        background: "#fafafa",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>Plan</div>
+                        <div style={{ fontWeight: 600 }}>
+                          {s.planName || s.planId}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
+                        <div>{s.status}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>Start</div>
+                        <div>{fmtDate(s.startDate)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>End</div>
+                        <div>{fmtDate(s.endDate)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, opacity: 0.7 }}>
+            Search a member to see subscription details.
+          </div>
+        )}
+      </div>
+
+      <div className="table-scroll">
+        <table
+          className="table-fixed table-truncate"
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <colgroup>
+            <col />
+            <col />
+            <col style={{ width: "220px" }} />
+            <col style={{ width: "90px" }} />
+            <col />
+            <col />
+            <col />
+          </colgroup>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Name</th>
+              <th align="left">Phone</th>
+              <th align="left">Email</th>
+              <th align="left">Status</th>
+              <th align="left">Subscription</th>
+              <th align="left">Comments</th>
+              <th align="left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => {
             return (
               <tr key={m.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                 <td>
-                  {isEditing ? (
-                    <input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      placeholder="Name"
-                    />
-                  ) : (
-                    m.name
-                  )}
+                  {m.name}
                 </td>
                 <td>
-                  {isEditing ? (
-                    <input
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      placeholder="+2547..."
-                    />
-                  ) : (
-                    m.phoneE164
-                  )}
+                  {m.phoneE164}
                 </td>
                 <td>
-                  {isEditing ? (
-                    <input
-                      value={editEmail}
-                      disabled
-                      title="Email is read-only"
-                    />
-                  ) : (
-                    m.email
-                  )}
+                  {m.email}
                 </td>
                 <td>
-                  {isEditing ? (
-                    <select
-                      value={editStatus}
-                      onChange={(e) => setEditStatus(e.target.value)}
-                    >
-                      <option value="active">active</option>
-                      <option value="inactive">inactive</option>
-                      <option value="blocked">blocked</option>
-                    </select>
-                  ) : (
-                    m.status || "active"
-                  )}
+                  {m.status || "active"}
                 </td>
                 <td>
                   {(() => {
                     const s = memberSubStatus.get(m.id);
-                    if (!s) return "—";
-                    return s.isActive ? "Active" : "Expired";
-                  })()}
+                      if (!s) return "—";
+                      return s.isActive ? "Active" : "Expired";
+                    })()}
                 </td>
                 <td>
-                  {isEditing ? (
-                    <textarea
-                      rows={1}
-                      value={editComments}
-                      onChange={(e) => setEditComments(e.target.value)}
-                      placeholder="Comments"
-                    />
-                  ) : (
-                    m.comments || "—"
-                  )}
+                  {m.comments || "—"}
                 </td>
                 <td>
-                  {isEditing ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button disabled={busy} type="button" onClick={saveEdit}>
-                        {busy ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        disabled={busy}
-                        type="button"
-                        onClick={cancelEdit}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => startEdit(m.id)}
-                    >
-                      Edit
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => startEdit(m.id)}
+                  >
+                    Edit
+                  </button>
                 </td>
               </tr>
             );
           })}
-          {!members.length ? (
-            <tr>
-              <td colSpan="7" style={{ opacity: 0.7 }}>
-                {busy ? "Loading…" : "No members yet."}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+            {!members.length ? (
+              <tr>
+                <td colSpan="7" style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No members yet."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {showEdit && editingId ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) cancelEdit();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontWeight: 800 }}>Edit member</div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Full name</span>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Name"
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Phone (E.164)</span>
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="+2547..."
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
+                <input
+                  value={editEmail}
+                  disabled
+                  title="Email is read-only"
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Status</span>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                >
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </label>
+            </div>
+
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, opacity: 0.7 }}>Comments</span>
+              <textarea
+                rows={3}
+                value={editComments}
+                onChange={(e) => setEditComments(e.target.value)}
+                placeholder="Comments"
+              />
+            </label>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button disabled={busy} type="button" onClick={saveEdit}>
+                {busy ? "Saving…" : "Save"}
+              </button>
+              <button disabled={busy} type="button" onClick={cancelEdit}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showAdd ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAdd(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 760,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontWeight: 800 }}>Add member</div>
+            </div>
+
+            <form
+              onSubmit={addMember}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Full name</span>
+                <input
+                  placeholder="Full name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
+                <input
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Country code</span>
+                <select
+                  value={countryCode}
+                  onChange={(e) => setCountryCode(e.target.value)}
+                >
+                  <option value="+254">Kenya (+254)</option>
+                  <option value="+255">Tanzania (+255)</option>
+                  <option value="+256">Uganda (+256)</option>
+                  <option value="+250">Rwanda (+250)</option>
+                  <option value="+257">Burundi (+257)</option>
+                  <option value="+251">Ethiopia (+251)</option>
+                  <option disabled>──────────</option>
+                  <option value="CUSTOM">Other (enter code)</option>
+                </select>
+                {isCustomCountryCode ? (
+                  <input
+                    placeholder="e.g. +1"
+                    value={countryCodeCustom}
+                    onChange={(e) => setCountryCodeCustom(e.target.value)}
+                  />
+                ) : null}
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Phone</span>
+                <input
+                  placeholder="Phone (e.g. 712345678)"
+                  value={phoneLocal}
+                  onChange={(e) => setPhoneLocal(e.target.value)}
+                />
+              </label>
+              <label
+                style={{
+                  display: "grid",
+                  gap: 6,
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Comments</span>
+                <textarea
+                  rows={2}
+                  placeholder="Comments"
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={sendWelcomeSms}
+                  onChange={(e) => setSendWelcomeSms(e.target.checked)}
+                />
+                <span style={{ fontSize: 12, opacity: 0.8 }}>
+                  Send welcome SMS
+                </span>
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button disabled={busy} type="submit">
+                  {busy ? "Saving…" : "Add member"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: 10, fontSize: 12, opacity: 0.65 }}>
         Note: Email is read-only here (changing email needs updating Firebase

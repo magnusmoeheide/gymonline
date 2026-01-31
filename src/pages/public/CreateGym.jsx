@@ -17,7 +17,8 @@ export default function CreateGym() {
   const [busy, setBusy] = useState(false);
   const [gymName, setGymName] = useState("");
   const [adminName, setAdminName] = useState("");
-  const [adminPhoneE164, setAdminPhoneE164] = useState("");
+  const [adminCountryCode, setAdminCountryCode] = useState("+254");
+  const [adminPhoneLocal, setAdminPhoneLocal] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
@@ -32,8 +33,18 @@ export default function CreateGym() {
       return alert("That gym name is taken. Please choose a different name.");
     }
     if (!adminName.trim()) return alert("Admin name required");
-    if (!adminPhoneE164.trim().startsWith("+"))
-      return alert("Phone must be E.164 (+...)");
+    const phoneDigits = String(adminPhoneLocal || "").replace(/\D/g, "");
+    const phoneOk =
+      !phoneDigits ||
+      (adminCountryCode === "+254"
+        ? phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0])
+        : phoneDigits.length >= 6);
+    if (!phoneDigits) return alert("Admin phone required");
+    if (!phoneOk)
+      return alert(
+        "Phone format invalid. For Kenya use 9 digits, starting with 7 or 1."
+      );
+    const adminPhoneE164 = `${adminCountryCode}${phoneDigits}`;
     if (!adminEmail.trim()) return alert("Admin email required");
     if ((adminPassword || "").length < 6) return alert("Password min 6 chars");
 
@@ -44,7 +55,7 @@ export default function CreateGym() {
         gymName: gymName.trim(),
         slug: derivedSlug,
         adminName: adminName.trim(),
-        adminPhoneE164: adminPhoneE164.trim(),
+        adminPhoneE164,
         adminEmail: adminEmail.trim().toLowerCase(),
         adminPassword: adminPassword.trim(),
       });
@@ -56,6 +67,12 @@ export default function CreateGym() {
         adminEmail.trim().toLowerCase(),
         adminPassword.trim()
       );
+
+      setAdminName("");
+      setAdminCountryCode("+254");
+      setAdminPhoneLocal("");
+      setAdminEmail("");
+      setAdminPassword("");
 
       alert("Gym created! Now open your gym login page.");
       window.location.href = `${window.location.origin}/${derivedSlug}/login`;
@@ -112,9 +129,6 @@ export default function CreateGym() {
           <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
             Create a new gym
           </div>
-          <div style={{ fontSize: 13, opacity: 0.75 }}>
-            No gym slug detected. Create a gym to get your own slug.
-          </div>
         </div>
 
         <form onSubmit={createGym} style={{ display: "grid", gap: 10 }}>
@@ -123,22 +137,29 @@ export default function CreateGym() {
             value={gymName}
             onChange={(e) => setGymName(e.target.value)}
           />
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Slug: <b>{gymName.replace(/\s+/g, "").toLowerCase() || "—"}</b>
-          </div>
-
-          <div style={{ height: 1, background: "#eee", margin: "6px 0" }} />
-
           <input
             placeholder="Admin full name"
             value={adminName}
             onChange={(e) => setAdminName(e.target.value)}
           />
-          <input
-            placeholder="Admin phone (E.164) e.g. +2547..."
-            value={adminPhoneE164}
-            onChange={(e) => setAdminPhoneE164(e.target.value)}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 8 }}>
+            <select
+              value={adminCountryCode}
+              onChange={(e) => setAdminCountryCode(e.target.value)}
+            >
+              <option value="+254">Kenya (+254)</option>
+              <option value="+255">Tanzania (+255)</option>
+              <option value="+256">Uganda (+256)</option>
+              <option value="+250">Rwanda (+250)</option>
+              <option value="+257">Burundi (+257)</option>
+              <option value="+251">Ethiopia (+251)</option>
+            </select>
+            <input
+              placeholder="Admin phone (e.g. 712345678)"
+              value={adminPhoneLocal}
+              onChange={(e) => setAdminPhoneLocal(e.target.value)}
+            />
+          </div>
           <input
             placeholder="Admin email"
             value={adminEmail}

@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isGymAdminOrSuper() {
+      return isSignedIn()
+        && (request.auth.token.role == "GYM_ADMIN"
+          || request.auth.token.role == "SUPER_ADMIN");
+    }
+
+    function sameGym(gymId) {
+      return isSignedIn()
+        && (request.auth.token.gymId == gymId
+          || request.auth.token.role == "SUPER_ADMIN");
+    }
+
+    // Public read for branding assets
+    match /gyms/{gymId}/branding/{fileName} {
+      allow read: if true;
+      allow write: if isGymAdminOrSuper() && sameGym(gymId);
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

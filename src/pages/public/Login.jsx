@@ -7,6 +7,7 @@ import {
   RecaptchaVerifier,
   signInWithEmailAndPassword,
   signInWithPhoneNumber,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { auth, authPersistenceReady } from "../../firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -17,11 +18,12 @@ import { db } from "../../firebase/db";
 
 export default function Login({ embedded = false }) {
   const nav = useNavigate();
-  const { userDoc, realUserDoc, loading: authLoading } = useAuth();
+  const { userDoc, realUserDoc, loading: authLoading, authUser, authReady } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [usePhone, setUsePhone] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
   const [countryCode, setCountryCode] = useState("+254");
   const [phoneLocal, setPhoneLocal] = useState("");
   const [smsCode, setSmsCode] = useState("");
@@ -48,6 +50,9 @@ export default function Login({ embedded = false }) {
   const [gyms, setGyms] = useState([]);
   const [selectedGymId, setSelectedGymId] = useState("");
   const [gymPublic, setGymPublic] = useState(null);
+  const websiteText = gymPublic?.websiteText || "";
+  const location = gymPublic?.location || "";
+  const openingHours = gymPublic?.openingHours || "";
 
   const mountedRef = useRef(false);
   const recaptchaRef = useRef(null);
@@ -162,10 +167,14 @@ export default function Login({ embedded = false }) {
     };
   }, [dbRef, slugGymId]);
 
+  const routeAttemptedRef = useRef(false);
+
   useEffect(() => {
     console.log("[Login] routing effect fired", {
       hasUserDoc: !!userDoc,
       hasRealUserDoc: !!realUserDoc,
+      hasAuthUser: !!authUser,
+      authReady,
       slug,
       basePath,
       tenantBasePath,
@@ -175,6 +184,19 @@ export default function Login({ embedded = false }) {
       authLoading,
     });
 
+    if (!authReady || authLoading) {
+      console.log("[Login] routing paused: auth loading", {
+        authReady,
+        authLoading,
+      });
+      return;
+    }
+
+    if (!authUser) {
+      console.log("[Login] routing paused: signed out");
+      return;
+    }
+
     // Most common reason you're stuck: userDoc/realUserDoc never become truthy.
     // This logs it explicitly.
     if (!userDoc || !realUserDoc) {
@@ -183,6 +205,11 @@ export default function Login({ embedded = false }) {
         realUserDoc: !!realUserDoc,
         authLoading,
       });
+      if (!routeAttemptedRef.current) {
+        routeAttemptedRef.current = true;
+        console.warn("[Login] attempting fallback routing via auth user");
+        routeAfterLogin(authUser);
+      }
       return;
     }
 
@@ -230,6 +257,8 @@ export default function Login({ embedded = false }) {
   }, [
     userDoc,
     realUserDoc,
+    authUser,
+    authReady,
     nav,
     slug,
     basePath,
@@ -304,6 +333,22 @@ export default function Login({ embedded = false }) {
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+
+    if (!usePhone && resetMode) {
+      const em = String(email || "").trim();
+      if (!em) {
+        setErr("Enter your email to reset your password.");
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, em);
+        setErr("Password reset email sent. Check your inbox.");
+      } catch (e2) {
+        console.error("[Login] password reset FAILED", e2);
+        setErr(e2?.message || "Failed to send reset email");
+      }
+      return;
+    }
 
     console.log("[Login] submit", {
       email: email.trim(),
@@ -388,6 +433,16 @@ export default function Login({ embedded = false }) {
     }
   }
 
+  function onForgotPassword() {
+    setErr("");
+    setResetMode(true);
+  }
+
+  function onCancelReset() {
+    setErr("");
+    setResetMode(false);
+  }
+
   function enterSelectedGym() {
     const gym = gyms.find((g) => g.id === selectedGymId);
     console.log("[Login] enterSelectedGym", { selectedGymId, gym });
@@ -401,6 +456,8 @@ export default function Login({ embedded = false }) {
     ? { width: "100%", maxWidth: embedded ? 420 : 440, padding: 0, border: "none", boxShadow: "none", background: "transparent" }
     : { width: "100%", maxWidth: 440, padding: 22 };
 
+  const showGymContent = !embedded && !!slug;
+
   return (
     <div
       style={{
@@ -411,36 +468,102 @@ export default function Login({ embedded = false }) {
       }}
     >
       <div
-        className="card"
-        style={cardStyle}
+        style={{
+          display: "grid",
+          gap: 16,
+          alignItems: "start",
+          justifyContent: "center",
+          maxWidth: showGymContent ? 800 : 520,
+          width: "100%",
+          margin: "0 auto",
+          gridTemplateColumns: showGymContent ? "1fr 1fr" : "1fr",
+        }}
       >
-        {!embedded ? (
-          <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-            {gymPublic?.loginLogoUrl ? (
-              <img
-                src={gymPublic.loginLogoUrl}
-                alt="Gym logo"
-                style={{ height: 42, objectFit: "contain" }}
-              />
+        {showGymContent && (gymPublic?.name || websiteText || location || openingHours) ? (
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              display: "grid",
+              gap: 8,
+              padding: 12,
+              borderRadius: 12,
+              background: "#fff7ed",
+              border: "1px solid rgba(28,24,19,.12)",
+            }}
+          >
+            {gymPublic?.name ? (
+              <div style={{ fontSize: 16, fontWeight: 800 }}>
+                {gymPublic.name}
+              </div>
             ) : null}
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
-              {gymPublic?.name || "GymOnline"}
-            </div>
-            <div style={{ fontSize: 13, opacity: 0.75 }}>
-              {gymPublic?.loginText ||
-                "Sign in to manage your membership and bundles."}
-            </div>
+            {location ? (
+              <div style={{ fontSize: 13, opacity: 0.75 }}>
+                <b>Location:</b> {location}
+              </div>
+            ) : null}
+            {openingHours ? (
+              <div style={{ fontSize: 13, opacity: 0.75 }}>
+                <b>Opening hours:</b> {openingHours}
+              </div>
+            ) : null}
+            {websiteText ? (
+              <div style={{ fontSize: 14, opacity: 0.85 }}>
+                {websiteText}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
-        {slug && !authLoading ? (
-          <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 13 }}>
-            Gym: <b>{slug}</b>
-            {slugLoading ? (
-              <span style={{ marginLeft: 8, opacity: 0.6 }}>Loading…</span>
-            ) : null}
+        {showGymContent ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              alignContent: "start",
+            }}
+          >
+            {gymPublic?.loginLogoUrl ? (
+              <div
+                style={{
+                  height: "100%",
+                  minHeight: 240,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 12,
+                  border: "1px solid rgba(28,24,19,.12)",
+                  borderRadius: 12,
+                  background: "#fff",
+                }}
+              >
+                <img
+                  src={gymPublic.loginLogoUrl}
+                  alt="Gym logo"
+                  style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain" }}
+                />
+              </div>
+            ) : (
+              <div
+                style={{
+                  height: "100%",
+                  minHeight: 240,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 12,
+                  border: "1px solid rgba(28,24,19,.12)",
+                  borderRadius: 12,
+                  background: "#fff",
+                  fontSize: 56,
+                }}
+              >
+                <i className="fa-solid fa-dumbbell" aria-hidden="true" />
+              </div>
+            )}
           </div>
         ) : null}
+
+        <div className="card" style={cardStyle}>
 
         {slug && !slugLoading && !exists && !authLoading ? (
           <div style={{ marginBottom: 12, fontSize: 13, opacity: 0.85 }}>
@@ -495,13 +618,15 @@ export default function Login({ embedded = false }) {
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="username"
                 />
-                <input
-                  placeholder="Password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                />
+                {!resetMode ? (
+                  <input
+                    placeholder="Password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                ) : null}
               </>
             ) : (
               <>
@@ -545,10 +670,33 @@ export default function Login({ embedded = false }) {
                   : smsBusy
                   ? "Sending code…"
                   : "Send code"
+                : resetMode
+                ? busy
+                  ? "Sending…"
+                  : "Reset password"
                 : busy
                 ? "Signing in…"
                 : "Sign in"}
             </button>
+            {!usePhone ? (
+              <button
+                type="button"
+                onClick={resetMode ? onCancelReset : onForgotPassword}
+                disabled={busy || authLoading}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  fontSize: 12,
+                  textAlign: "left",
+                  color: "rgba(28,24,19,.75)",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                }}
+              >
+                {resetMode ? "Back to sign in" : "Forgot password?"}
+              </button>
+            ) : null}
           </form>
         )}
 
@@ -590,6 +738,7 @@ export default function Login({ embedded = false }) {
           </div>
         ) : null}
         <div id="recaptcha-container" />
+        </div>
       </div>
     </div>
   );

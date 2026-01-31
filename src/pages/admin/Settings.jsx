@@ -2,28 +2,18 @@
 import { useEffect, useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { db } from "../../firebase/db";
 import { functions } from "../../firebase/functionsClient";
 import { useAuth } from "../../context/AuthContext";
-import { storage } from "../../firebase/storage";
 
 export default function Settings() {
   const { userDoc } = useAuth();
   const gymId = userDoc?.gymId;
-  const gymSlug = userDoc?.gymSlug || "";
-
-  // templates (keep your placeholders)
-  const [expiring7, setExpiring7] = useState(
-    "Hi {{name}}, your membership expires on {{date}}. Renew to stay active."
-  );
-  const [expiring1, setExpiring1] = useState(
-    "Reminder: membership expires tomorrow ({{date}})."
-  );
-  const [expired, setExpired] = useState(
-    "Your membership expired on {{date}}. Renew anytime."
-  );
-
+  const [gymName, setGymName] = useState("");
+  const [gymSlug, setGymSlug] = useState("");
+  const [gymSavedName, setGymSavedName] = useState("");
+  const [gymSavedSlug, setGymSavedSlug] = useState("");
+  const [gymBusy, setGymBusy] = useState(false);
   // admins table
   const [admins, setAdmins] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -34,17 +24,14 @@ export default function Settings() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminTempPassword, setAdminTempPassword] = useState("");
 
-  // login branding
-  const [loginLogoUrl, setLoginLogoUrl] = useState("");
-  const [loginText, setLoginText] = useState("");
-  const [brandingBusy, setBrandingBusy] = useState(false);
-  const [logoFile, setLogoFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState("");
-
-  const [selfEmail, setSelfEmail] = useState("");
-  const [selfName, setSelfName] = useState("");
-  const [selfPhoneE164, setSelfPhoneE164] = useState("");
-  const [selfBusy, setSelfBusy] = useState(false);
+  const [showAddAdmin, setShowAddAdmin] = useState(false);
+  const [showEditAdmin, setShowEditAdmin] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editAdminId, setEditAdminId] = useState("");
+  const [editAdminName, setEditAdminName] = useState("");
+  const [editAdminPhoneE164, setEditAdminPhoneE164] = useState("");
+  const [editAdminEmail, setEditAdminEmail] = useState("");
+  const [editAdminStatus, setEditAdminStatus] = useState("active");
 
   async function loadAdmins() {
     if (!gymId) return;
@@ -75,32 +62,20 @@ export default function Settings() {
         const snap = await getDoc(doc(db, "gyms", gymId));
         if (!alive) return;
         const data = snap?.exists?.() ? snap.data() : {};
-        setLoginLogoUrl(data?.loginLogoUrl || "");
-        setLoginText(data?.loginText || "");
+        const name = String(data?.name || "");
+        const slug = String(data?.slug || "");
+        setGymName(name);
+        setGymSlug(slug);
+        setGymSavedName(name);
+        setGymSavedSlug(slug);
       } catch (e) {
-        console.error("Failed to load gym branding", e);
+        console.error("Failed to load gym details", e);
       }
     })();
     return () => {
       alive = false;
     };
   }, [gymId]);
-
-  useEffect(() => {
-    setSelfEmail(userDoc?.email || "");
-    setSelfName(userDoc?.name || "");
-    setSelfPhoneE164(userDoc?.phoneE164 || "");
-  }, [userDoc?.email]);
-
-  useEffect(() => {
-    if (!logoFile) {
-      setLogoPreview("");
-      return;
-    }
-    const url = URL.createObjectURL(logoFile);
-    setLogoPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [logoFile]);
 
   async function addGymAdmin(e) {
     e.preventDefault();
@@ -138,63 +113,73 @@ export default function Settings() {
     }
   }
 
-  async function saveBranding(e) {
+  function startEditAdmin(a) {
+    if (!a?.id) return;
+    setEditAdminId(a.id);
+    setEditAdminName(a.name || "");
+    setEditAdminPhoneE164(a.phoneE164 || "");
+    setEditAdminEmail(a.email || "");
+    setEditAdminStatus(a.status || "active");
+    setShowEditAdmin(true);
+  }
+
+  function cancelEditAdmin() {
+    setShowEditAdmin(false);
+    setEditAdminId("");
+    setEditAdminName("");
+    setEditAdminPhoneE164("");
+    setEditAdminEmail("");
+    setEditAdminStatus("active");
+  }
+
+  async function saveAdminEdit(e) {
     e.preventDefault();
-    if (!gymId) return;
-    setBrandingBusy(true);
+    if (!editAdminId) return;
+    if (!editAdminName.trim()) return alert("Name required");
+    if (!editAdminPhoneE164.trim().startsWith("+"))
+      return alert("Phone must be E.164 (+...)");
+
+    setEditBusy(true);
     try {
-      let nextLogoUrl = loginLogoUrl.trim();
-
-      if (logoFile) {
-        const ext = logoFile.name.includes(".")
-          ? logoFile.name.split(".").pop()
-          : "png";
-        const fileRef = storageRef(
-          storage,
-          `gyms/${gymId}/branding/login-logo.${ext}`
-        );
-        await uploadBytes(fileRef, logoFile, {
-          contentType: logoFile.type || "image/png",
-        });
-        nextLogoUrl = await getDownloadURL(fileRef);
-      }
-
-      await updateDoc(doc(db, "gyms", gymId), {
-        loginLogoUrl: nextLogoUrl,
-        loginText: loginText.trim(),
+      await updateDoc(doc(db, "users", editAdminId), {
+        name: editAdminName.trim(),
+        phoneE164: editAdminPhoneE164.trim(),
+        status: editAdminStatus,
+        updatedAt: new Date(),
       });
-
-      setLoginLogoUrl(nextLogoUrl);
-      setLogoFile(null);
-      alert("Login branding saved");
+      await loadAdmins();
+      cancelEditAdmin();
     } catch (err) {
       console.error(err);
-      alert(err?.message || "Failed to save branding");
+      alert(err?.message || "Failed to update admin");
     } finally {
-      setBrandingBusy(false);
+      setEditBusy(false);
     }
   }
 
-  async function updateOwnEmail(e) {
+  async function saveGymDetails(e) {
     e.preventDefault();
-    const next = String(selfEmail || "").trim().toLowerCase();
-    if (!next) return alert("Email required");
-    if (selfPhoneE164 && !selfPhoneE164.trim().startsWith("+"))
-      return alert("Phone must be E.164 (+...)");
-    setSelfBusy(true);
+    if (!gymId) return;
+    if (!gymName.trim()) return alert("Gym name required");
+    if (!gymSlug.trim()) return alert("Gym slug required");
+
+    setGymBusy(true);
     try {
-      const fn = httpsCallable(functions, "updateOwnProfile");
-      await fn({
-        email: next,
-        name: String(selfName || "").trim(),
-        phoneE164: String(selfPhoneE164 || "").trim(),
+      const fn = httpsCallable(functions, "updateGymDetails");
+      const res = await fn({
+        name: gymName.trim(),
+        slug: gymSlug.trim(),
       });
-      alert("Profile updated");
+      const nextSlug = res?.data?.slug || gymSlug.trim();
+      setGymSavedName(gymName.trim());
+      setGymSavedSlug(nextSlug);
+      setGymSlug(nextSlug);
+      alert("Gym details updated");
     } catch (err) {
       console.error(err);
-      alert(err?.message || "Failed to update profile");
+      alert(err?.message || "Failed to update gym details");
     } finally {
-      setSelfBusy(false);
+      setGymBusy(false);
     }
   }
 
@@ -203,226 +188,313 @@ export default function Settings() {
       <h2>Settings</h2>
 
       <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        Any questions? Contact us on <b>mail@gymonline.co</b> or{" "}
+        Any questions? Contact us on <b>mail@onlinegym.co</b> or{" "}
         <b>+254 721 499 429</b>
       </div>
 
-      <p style={{ opacity: 0.8 }}>
-        For now these templates are local placeholders. Next step is saving them
-        to <code>gyms/{`{gymId}`}</code> and using them in the Twilio function.
-      </p>
-
-      <div className="card" style={{ padding: 16, maxWidth: 520 }}>
-        <h3 style={{ marginTop: 0 }}>My account</h3>
-        <form onSubmit={updateOwnEmail} style={{ display: "grid", gap: 8 }}>
-          <input
-            placeholder="Your name"
-            value={selfName}
-            onChange={(e) => setSelfName(e.target.value)}
-          />
-          <input
-            placeholder="Your phone (E.164 +...)"
-            value={selfPhoneE164}
-            onChange={(e) => setSelfPhoneE164(e.target.value)}
-          />
-          <input
-            placeholder="Your email"
-            value={selfEmail}
-            onChange={(e) => setSelfEmail(e.target.value)}
-          />
-          <button className="btn-primary" disabled={selfBusy}>
-            {selfBusy ? "Saving…" : "Update email"}
-          </button>
+      <div className="card" style={{ padding: 16, maxWidth: 720 }}>
+        <h3 style={{ marginTop: 0 }}>Gym details</h3>
+        <form
+          onSubmit={saveGymDetails}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 10,
+          }}
+        >
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>Gym name</span>
+            <input
+              placeholder="Gym name"
+              value={gymName}
+              onChange={(e) => setGymName(e.target.value)}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>Gym slug</span>
+            <input
+              placeholder="gym-slug"
+              value={gymSlug}
+              onChange={(e) => setGymSlug(e.target.value)}
+            />
+          </label>
+          {gymSlug.trim() && gymSlug.trim() !== gymSavedSlug.trim() ? (
+            <div
+              style={{
+                gridColumn: "1 / -1",
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #fde68a",
+                background: "#fffbeb",
+                fontSize: 12,
+              }}
+            >
+              Changing the slug will change your login/admin links. Update any
+              saved links and bookmarks after saving.
+            </div>
+          ) : null}
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              justifyContent: "flex-end",
+              gridColumn: "1 / -1",
+            }}
+          >
+            <button className="btn-primary" disabled={gymBusy} type="submit">
+              {gymBusy ? "Saving…" : "Save gym details"}
+            </button>
+          </div>
         </form>
       </div>
 
-      <div style={{ display: "grid", gap: 10, maxWidth: 820 }}>
-        <label>
-          Expiring 7 days
-          <textarea
-            rows={2}
-            value={expiring7}
-            onChange={(e) => setExpiring7(e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </label>
-        <label>
-          Expiring 1 day
-          <textarea
-            rows={2}
-            value={expiring1}
-            onChange={(e) => setExpiring1(e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </label>
-        <label>
-          Expired
-          <textarea
-            rows={2}
-            value={expired}
-            onChange={(e) => setExpired(e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </label>
-      </div>
-
-      <hr style={{ margin: "20px 0" }} />
-
-      <h3>Login branding</h3>
-      <div style={{ fontSize: 13, opacity: 0.75 }}>
-        Login link:{" "}
-        {gymSlug ? (
-          <a
-            href={`https://onlinegym.co/${gymSlug}/login`}
-            target="_blank"
-            rel="noreferrer"
-            style={{ fontWeight: 700 }}
-          >
-            {`https://onlinegym.co/${gymSlug}/login`}
-          </a>
-        ) : (
-          <b>—</b>
-        )}
-      </div>
-
-      <form
-        onSubmit={saveBranding}
-        style={{ display: "grid", gap: 8, maxWidth: 600 }}
-      >
-        {loginLogoUrl ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: 10,
-              border: "1px solid #eee",
-              borderRadius: 10,
-              background: "#fafafa",
-            }}
-          >
-            <img
-              src={loginLogoUrl}
-              alt="Current logo"
-              style={{ height: 38, objectFit: "contain" }}
-            />
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Current logo
-            </div>
-          </div>
-        ) : null}
-
-        {logoPreview ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: 10,
-              border: "1px solid #eee",
-              borderRadius: 10,
-              background: "#fff",
-            }}
-          >
-            <img
-              src={logoPreview}
-              alt="New logo preview"
-              style={{ height: 38, objectFit: "contain" }}
-            />
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              New logo preview
-            </div>
-          </div>
-        ) : null}
-
-        <input
-          type="file"
-          accept="image/*"
-          onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
-        />
-        <textarea
-          rows={3}
-          placeholder="Login page text (optional)"
-          value={loginText}
-          onChange={(e) => setLoginText(e.target.value)}
-        />
-        <button className="btn-primary" disabled={brandingBusy}>
-          {brandingBusy ? "Saving…" : "Save branding"}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h3 style={{ margin: 0 }}>Gym Admins</h3>
+        <button
+          type="button"
+          onClick={() => setShowAddAdmin(true)}
+          disabled={busy}
+        >
+          Add gym admin
         </button>
-      </form>
-
-      <hr style={{ margin: "20px 0" }} />
-
-      <h3>Gym Admins</h3>
-
-      <form
-        onSubmit={addGymAdmin}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: 8,
-          marginBottom: 16,
-          alignItems: "center",
-        }}
-      >
-        <input
-          placeholder="Full name"
-          value={adminName}
-          onChange={(e) => setAdminName(e.target.value)}
-        />
-        <input
-          placeholder="Phone (E.164) e.g. +2547..."
-          value={adminPhoneE164}
-          onChange={(e) => setAdminPhoneE164(e.target.value)}
-        />
-        <input
-          placeholder="Email"
-          value={adminEmail}
-          onChange={(e) => setAdminEmail(e.target.value)}
-          name="gymadmin-create-email"
-          autoComplete="off"
-        />
-        <input
-          placeholder="Temp password (min 6 chars)"
-          value={adminTempPassword}
-          onChange={(e) => setAdminTempPassword(e.target.value)}
-          autoComplete="new-password"
-        />
-        <button disabled={busy}>{busy ? "Saving…" : "Add gym admin"}</button>
-      </form>
+      </div>
 
 
-      <table
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Name</th>
-            <th align="left">Phone</th>
-            <th align="left">Email</th>
-            <th align="left">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {admins.map((a) => (
-            <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-              <td>{a.name}</td>
-              <td>{a.phoneE164}</td>
-              <td>{a.email || "-"}</td>
-              <td>{a.status || "active"}</td>
+      <div className="table-scroll">
+        <table
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Name</th>
+              <th align="left">Phone</th>
+              <th align="left">Email</th>
+              <th align="left">Status</th>
+              <th align="left">Actions</th>
             </tr>
-          ))}
-          {!admins.length ? (
-            <tr>
-              <td colSpan="4" style={{ opacity: 0.7 }}>
-                {busy ? "Loading…" : "No gym admins yet."}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {admins.map((a) => (
+              <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                <td>{a.name}</td>
+                <td>{a.phoneE164}</td>
+                <td>{a.email || "-"}</td>
+                <td>{a.status || "active"}</td>
+                <td>
+                  <button type="button" onClick={() => startEditAdmin(a)}>
+                    Edit
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!admins.length ? (
+              <tr>
+                <td colSpan="5" style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No gym admins yet."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {showAddAdmin ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAddAdmin(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>Add gym admin</div>
+            <form
+              onSubmit={addGymAdmin}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Full name</span>
+                <input
+                  placeholder="Full name"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Phone (E.164)
+                </span>
+                <input
+                  placeholder="Phone (E.164) e.g. +2547..."
+                  value={adminPhoneE164}
+                  onChange={(e) => setAdminPhoneE164(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
+                <input
+                  placeholder="Email"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  name="gymadmin-create-email"
+                  autoComplete="off"
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Temp password
+                </span>
+                <input
+                  placeholder="Temp password (min 6 chars)"
+                  value={adminTempPassword}
+                  onChange={(e) => setAdminTempPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button disabled={busy} type="submit">
+                  {busy ? "Saving…" : "Add gym admin"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddAdmin(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showEditAdmin ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) cancelEditAdmin();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 720,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>Edit gym admin</div>
+            <form
+              onSubmit={saveAdminEdit}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Full name</span>
+                <input
+                  placeholder="Full name"
+                  value={editAdminName}
+                  onChange={(e) => setEditAdminName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Phone (E.164)
+                </span>
+                <input
+                  placeholder="Phone (E.164) e.g. +2547..."
+                  value={editAdminPhoneE164}
+                  onChange={(e) => setEditAdminPhoneE164(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
+                <input value={editAdminEmail} disabled />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Status</span>
+                <select
+                  value={editAdminStatus}
+                  onChange={(e) => setEditAdminStatus(e.target.value)}
+                >
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button disabled={editBusy} type="submit">
+                  {editBusy ? "Saving…" : "Save changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEditAdmin}
+                  disabled={editBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

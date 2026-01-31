@@ -21,27 +21,31 @@ function join(basePath, p) {
 }
 
 const MEMBER_LINKS = [
-  { to: "/app", label: "Dashboard", end: true },
-  { to: "/app/membership", label: "Membership" },
-  { to: "/app/orders", label: "Orders" },
-  { to: "/app/store", label: "Store" },
-  { to: "/app/profile", label: "Profile" },
+  { to: "/app", label: "Dashboard", end: true, icon: "fa-solid fa-house" },
+  { to: "/app/membership", label: "Membership", icon: "fa-solid fa-id-card" },
+  { to: "/app/orders", label: "Orders", icon: "fa-solid fa-receipt" },
+  { to: "/app/store", label: "Store", icon: "fa-solid fa-cart-shopping" },
+  { to: "/app/profile", label: "Profile", icon: "fa-solid fa-user" },
 ];
 
 const ADMIN_LINKS = [
-  { to: "/admin", label: "Overview", end: true },
-  { to: "/admin/members", label: "Members" },
-  { to: "/admin/subscriptions", label: "Subscriptions" },
-  { to: "/admin/orders", label: "Orders" },
-  { to: "/admin/plans", label: "Plans" },
-  { to: "/admin/products", label: "Products" },
-  { to: "/admin/settings", label: "Settings" },
+  { to: "/admin", label: "Overview", end: true, icon: "fa-solid fa-chart-line" },
+  { to: "/admin/members", label: "Members", icon: "fa-solid fa-users" },
+  { to: "/admin/subscriptions", label: "Subscriptions", icon: "fa-solid fa-clipboard-list" },
+  { to: "/admin/revenue", label: "Revenue", icon: "fa-solid fa-coins" },
+  { to: "/admin/orders", label: "Orders", icon: "fa-solid fa-receipt" },
+  { to: "/admin/website", label: "Website", icon: "fa-solid fa-globe" },
+  { to: "/admin/communication", label: "Communication", icon: "fa-solid fa-message" },
+  { to: "/admin/plans", label: "Plans", icon: "fa-solid fa-calendar-check" },
+  { to: "/admin/products", label: "Products", icon: "fa-solid fa-box-open" },
+  { to: "/admin/settings", label: "Settings", icon: "fa-solid fa-gear" },
 ];
 
 const SUPERADMIN_LINKS = [
-  { to: "/superadmin", label: "Gyms", end: true },
-  { to: "/superadmin/payments", label: "Payments" },
-  { to: "/superadmin/settings", label: "Settings" },
+  { to: "/superadmin", label: "Gyms", end: true, icon: "fa-solid fa-dumbbell" },
+  { to: "/superadmin/balance", label: "Balance", icon: "fa-solid fa-wallet" },
+  { to: "/superadmin/payments", label: "Payments", icon: "fa-solid fa-money-check-dollar" },
+  { to: "/superadmin/settings", label: "Settings", icon: "fa-solid fa-gear" },
 ];
 
 function Navbar({ mode = "member" }) {
@@ -50,7 +54,7 @@ function Navbar({ mode = "member" }) {
   const slug = params?.slug ? String(params.slug) : "";
   const basePath = slug ? `/${slug}` : "";
 
-  const { userDoc, stopSimulation, isSimulated, realUserDoc } = useAuth();
+  const { userDoc, stopSimulation, isSimulated, realUserDoc, gymName } = useAuth();
 
   const links = useMemo(() => {
     if (mode === "superadmin") return SUPERADMIN_LINKS;
@@ -69,8 +73,8 @@ function Navbar({ mode = "member" }) {
 
   const handleLogout = useCallback(async () => {
     stopSimulation();
-    await signOut(auth);
-    window.location.assign("/");
+    signOut(auth).catch(() => {});
+    window.location.replace("/");
   }, [stopSimulation]);
 
   const exitSim = useCallback(() => {
@@ -111,7 +115,7 @@ function Navbar({ mode = "member" }) {
     >
       <div style={{ display: "grid", gap: 6 }}>
         <div style={{ fontWeight: 800, letterSpacing: 0.2 }}>
-          {mode === "superadmin" ? "Super Admin" : "Gym"} Intranet
+          {mode === "superadmin" ? "Super Admin" : gymName || "Gym"}
         </div>
         <div style={{ fontSize: 12, opacity: 0.65 }}>
           {isSimulated ? (
@@ -148,7 +152,12 @@ function Navbar({ mode = "member" }) {
               fontWeight: isActive ? 650 : 500,
             })}
           >
-            {l.label}
+            <i
+              className={l.icon}
+              aria-hidden="true"
+              style={{ width: 16, textAlign: "center", marginRight: 12 }}
+            />
+            <span>{l.label}</span>
           </NavLink>
         ))}
       </nav>

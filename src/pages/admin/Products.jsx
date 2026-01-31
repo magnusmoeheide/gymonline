@@ -19,6 +19,7 @@ export default function Products() {
 
   const [busy, setBusy] = useState(false);
   const [products, setProducts] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
 
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
@@ -58,6 +59,7 @@ export default function Products() {
       });
       setName("");
       setPrice("");
+      setShowAdd(false);
       await load();
     } finally {
       setBusy(false);
@@ -90,69 +92,135 @@ export default function Products() {
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
-      <h2>Products (Supplements)</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h2 style={{ margin: 0 }}>Products</h2>
+        <button type="button" onClick={() => setShowAdd(true)} disabled={busy}>
+          Create product
+        </button>
+      </div>
+      <p style={{ margin: 0, opacity: 0.75 }}>
+        Use this section to sell supplements, training sessions, or any other
+        add-ons to your members.
+      </p>
 
-      <form
-        onSubmit={create}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 8,
-          marginBottom: 16,
-          alignItems: "center",
-        }}
-      >
-        <input
-          placeholder="Product name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <input
-          placeholder="Price"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-        />
-        <button disabled={busy}>{busy ? "Saving…" : "Create product"}</button>
-      </form>
+      <div className="table-scroll">
+        <table
+          width="100%"
+          cellPadding="8"
+          style={{ borderCollapse: "collapse" }}
+        >
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee" }}>
+              <th align="left">Name</th>
+              <th align="left">Price</th>
+              <th align="left">Active</th>
+              <th align="left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((p) => (
+              <tr key={p.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                <td>{p.name}</td>
+                <td>{p.price}</td>
+                <td>{String(!!p.isActive)}</td>
+                <td>
+                  <button disabled={busy} onClick={() => toggle(p)}>
+                    {p.isActive ? "Disable" : "Enable"}
+                  </button>{" "}
+                  <button disabled={busy} onClick={() => remove(p)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!products.length ? (
+              <tr>
+                <td colSpan="4" style={{ opacity: 0.7 }}>
+                  {busy ? "Loading…" : "No products yet."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
 
-      <table
-        width="100%"
-        cellPadding="8"
-        style={{ borderCollapse: "collapse" }}
-      >
-        <thead>
-          <tr style={{ borderBottom: "1px solid #eee" }}>
-            <th align="left">Name</th>
-            <th align="left">Price</th>
-            <th align="left">Active</th>
-            <th align="left">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-              <td>{p.name}</td>
-              <td>{p.price}</td>
-              <td>{String(!!p.isActive)}</td>
-              <td>
-                <button disabled={busy} onClick={() => toggle(p)}>
-                  {p.isActive ? "Disable" : "Enable"}
-                </button>{" "}
-                <button disabled={busy} onClick={() => remove(p)}>
-                  Delete
+      {showAdd ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAdd(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 640,
+              background: "#fff",
+              borderRadius: 12,
+              border: "1px solid #eee",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>Create product</div>
+            <form
+              onSubmit={create}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Product name</span>
+                <input
+                  placeholder="Product name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Price</span>
+                <input
+                  placeholder="Price"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                />
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <button disabled={busy} type="submit">
+                  {busy ? "Saving…" : "Create product"}
                 </button>
-              </td>
-            </tr>
-          ))}
-          {!products.length ? (
-            <tr>
-              <td colSpan="4" style={{ opacity: 0.7 }}>
-                {busy ? "Loading…" : "No products yet."}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

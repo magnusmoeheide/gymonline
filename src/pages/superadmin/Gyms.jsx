@@ -31,7 +31,15 @@ export default function Gyms() {
   const [assignPhone, setAssignPhone] = useState("");
   const [assignPassword, setAssignPassword] = useState("");
   const [emailEdits, setEmailEdits] = useState({});
-  const [emailSaving, setEmailSaving] = useState({});
+  const [phoneEdits, setPhoneEdits] = useState({});
+  const [adminSaving, setAdminSaving] = useState({});
+  const [resetSaving, setResetSaving] = useState({});
+  const [showCreate, setShowCreate] = useState(false);
+  const [showAssign, setShowAssign] = useState(false);
+  const [showEditGym, setShowEditGym] = useState(false);
+  const [editGymId, setEditGymId] = useState("");
+  const [editGymName, setEditGymName] = useState("");
+  const [editGymSlug, setEditGymSlug] = useState("");
 
   const fetchData = useCallback(async () => {
     if (realUserDoc?.role !== "SUPER_ADMIN") return;
@@ -133,7 +141,8 @@ export default function Gyms() {
         setAdminEmail("");
         setAdminPhoneLocal("");
         setAdminPassword("");
-      await fetchData();
+        setShowCreate(false);
+        await fetchData();
       } catch (err) {
         console.error(err);
         alert(err?.message || "Failed to create gym");
@@ -159,6 +168,7 @@ export default function Gyms() {
     setAssignEmail("");
     setAssignPhone("");
     setAssignPassword("");
+    setShowAssign(true);
   }, []);
 
   const cancelAssign = useCallback(() => {
@@ -167,11 +177,12 @@ export default function Gyms() {
     setAssignEmail("");
     setAssignPhone("");
     setAssignPassword("");
+    setShowAssign(false);
   }, []);
 
   const handleAssignAdmin = useCallback(
     async (e) => {
-      e.preventDefault();
+      if (e?.preventDefault) e.preventDefault();
       if (!assignGymId) return;
       if (!assignName.trim()) return alert("Admin name required");
       if (!assignEmail.trim()) return alert("Admin email required");
@@ -211,38 +222,122 @@ export default function Gyms() {
     ]
   );
 
-  const handleEmailChange = useCallback((uid, value) => {
+  const handleAdminEmailChange = useCallback((uid, value) => {
     setEmailEdits((prev) => ({ ...prev, [uid]: value }));
   }, []);
 
-  const updateAdminEmail = useCallback(
+  const handleAdminPhoneChange = useCallback((uid, value) => {
+    setPhoneEdits((prev) => ({ ...prev, [uid]: value }));
+  }, []);
+
+  const saveAdminEdits = useCallback(
     async (admin) => {
       if (!admin?.id) return;
       const nextEmail = String(emailEdits[admin.id] ?? admin.email ?? "")
         .trim()
         .toLowerCase();
-      if (!nextEmail) return alert("Email required");
+      const nextPhone = String(phoneEdits[admin.id] ?? admin.phoneE164 ?? "").trim();
 
-      setEmailSaving((prev) => ({ ...prev, [admin.id]: true }));
+      if (!nextEmail) return alert("Email required");
+      if (!nextPhone.startsWith("+"))
+        return alert("Phone must be E.164 (+...)");
+
+      setAdminSaving((prev) => ({ ...prev, [admin.id]: true }));
       try {
-        const fn = httpsCallable(functions, "updateGymAdminEmail");
-        await fn({ uid: admin.id, email: nextEmail });
+        if (nextEmail !== (admin.email || "")) {
+          const fnEmail = httpsCallable(functions, "updateGymAdminEmail");
+          await fnEmail({ uid: admin.id, email: nextEmail });
+        }
+        if (nextPhone !== (admin.phoneE164 || "")) {
+          const fnPhone = httpsCallable(functions, "updateGymAdminPhone");
+          await fnPhone({ uid: admin.id, phoneE164: nextPhone });
+        }
+
         setGyms((prev) =>
           prev.map((g) => ({
             ...g,
             admins: (g.admins || []).map((a) =>
-              a.id === admin.id ? { ...a, email: nextEmail } : a
+              a.id === admin.id
+                ? { ...a, email: nextEmail, phoneE164: nextPhone }
+                : a
             ),
           }))
         );
       } catch (err) {
         console.error(err);
-        alert(err?.message || "Failed to update email");
+        alert(err?.message || "Failed to update admin");
       } finally {
-        setEmailSaving((prev) => ({ ...prev, [admin.id]: false }));
+        setAdminSaving((prev) => ({ ...prev, [admin.id]: false }));
       }
     },
-    [emailEdits]
+    [emailEdits, phoneEdits]
+  );
+
+  const resetAdminPassword = useCallback(async (admin) => {
+    if (!admin?.id) return;
+    setResetSaving((prev) => ({ ...prev, [admin.id]: true }));
+    try {
+      const fn = httpsCallable(functions, "resetGymAdminPassword");
+      const res = await fn({ uid: admin.id });
+      const link = res?.data?.resetLink || "";
+      if (!link) {
+        alert("Reset link not available.");
+        return;
+      }
+      window.prompt("Password reset link (copy + share):", link);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Failed to reset password");
+    } finally {
+      setResetSaving((prev) => ({ ...prev, [admin.id]: false }));
+    }
+  }, []);
+
+  const startEditGym = useCallback((gym) => {
+    if (!gym?.id) return;
+    setEditGymId(gym.id);
+    setEditGymName(gym.name || "");
+    setEditGymSlug(gym.slug || "");
+    setShowEditGym(true);
+  }, []);
+
+  const cancelEditGym = useCallback(() => {
+    setShowEditGym(false);
+    setEditGymId("");
+    setEditGymName("");
+    setEditGymSlug("");
+  }, []);
+
+  const saveEditGym = useCallback(
+    async (e) => {
+      e.preventDefault();
+      if (!editGymId) return;
+      if (!editGymName.trim()) return alert("Gym name required");
+      if (!editGymSlug.trim()) return alert("Gym slug required");
+      setSaving(true);
+      try {
+        const fn = httpsCallable(functions, "updateGymDetails");
+        await fn({
+          gymId: editGymId,
+          name: editGymName.trim(),
+          slug: editGymSlug.trim(),
+        });
+        setGyms((prev) =>
+          prev.map((g) =>
+            g.id === editGymId
+              ? { ...g, name: editGymName.trim(), slug: editGymSlug.trim() }
+              : g
+          )
+        );
+        cancelEditGym();
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Failed to update gym");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [editGymId, editGymName, editGymSlug, cancelEditGym]
   );
 
   if (realUserDoc?.role !== "SUPER_ADMIN") {
@@ -274,77 +369,6 @@ export default function Gyms() {
 
   return (
     <div className="superadmin-page" style={{ padding: 24 }}>
-      <div className="card" style={{ padding: 16, marginBottom: 18 }}>
-        <h3 style={{ marginTop: 0 }}>Create gym + admin</h3>
-        <form
-          onSubmit={handleCreateGym}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-            gap: 10,
-            maxWidth: 640,
-          }}
-        >
-          <input
-            placeholder="Gym name"
-            value={gymName}
-            onChange={(e) => setGymName(e.target.value)}
-          />
-          <input
-            placeholder="Gym slug (e.g. powergym)"
-            value={gymSlug}
-            onChange={(e) => setGymSlug(e.target.value)}
-          />
-          <input
-            placeholder="Admin full name"
-            value={adminName}
-            onChange={(e) => setAdminName(e.target.value)}
-          />
-          <input
-            placeholder="Admin email"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-            name="superadmin-create-email"
-            autoComplete="off"
-          />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "0.9fr 1.4fr",
-              gap: 8,
-              gridColumn: "1 / -1",
-            }}
-          >
-            <select
-              value={adminCountryCode}
-              onChange={(e) => setAdminCountryCode(e.target.value)}
-            >
-              <option value="+254">Kenya (+254)</option>
-              <option value="+255">Tanzania (+255)</option>
-              <option value="+256">Uganda (+256)</option>
-              <option value="+250">Rwanda (+250)</option>
-              <option value="+257">Burundi (+257)</option>
-              <option value="+251">Ethiopia (+251)</option>
-            </select>
-            <input
-              placeholder="Admin phone (e.g. 712345678)"
-              value={adminPhoneLocal}
-              onChange={(e) => setAdminPhoneLocal(e.target.value)}
-            />
-          </div>
-          <input
-            placeholder="Admin temp password (min 6 chars)"
-            type="password"
-            value={adminPassword}
-            onChange={(e) => setAdminPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          <button disabled={saving} style={{ gridColumn: "1 / -1" }}>
-            {saving ? "Creating…" : "Create gym"}
-          </button>
-        </form>
-      </div>
-
       <div
         style={{
           display: "flex",
@@ -354,6 +378,19 @@ export default function Gyms() {
         }}
       >
         <h2 style={{ margin: 0 }}>All Gyms</h2>
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          style={{
+            padding: "6px 12px",
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            background: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          Create gym
+        </button>
 
         {isSimulated ? (
           <button
@@ -374,136 +411,409 @@ export default function Gyms() {
       {gyms.length === 0 ? (
         <p>No gyms found.</p>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #ddd" }}>
-              <th style={{ textAlign: "left", padding: "8px" }}>Gym Name</th>
-              <th style={{ textAlign: "left", padding: "8px" }}>Slug</th>
-              <th style={{ textAlign: "left", padding: "8px" }}>Currency</th>
-              <th style={{ textAlign: "left", padding: "8px" }}>Admins</th>
-              <th style={{ textAlign: "left", padding: "8px" }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {gyms.map((gym) => (
-              <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
-                <td style={{ padding: "8px" }}>{gym.name}</td>
-                <td style={{ padding: "8px" }}>{gym.slug}</td>
-                <td style={{ padding: "8px" }}>{gym.currency}</td>
-                <td style={{ padding: "8px" }}>
-                  {gym.admins?.length ? (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {gym.admins.map((a) => (
-                        <div
-                          key={a.id}
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "1fr 1.2fr auto",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <div style={{ fontWeight: 600 }}>{a.name}</div>
-                          <input
-                            value={emailEdits[a.id] ?? a.email ?? ""}
-                            onChange={(e) =>
-                              handleEmailChange(a.id, e.target.value)
-                            }
-                            placeholder="Admin email"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateAdminEmail(a)}
-                            disabled={!!emailSaving[a.id]}
-                          >
-                            {emailSaving[a.id] ? "Saving…" : "Update"}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <span style={{ opacity: 0.6 }}>No admins</span>
-                  )}
-                </td>
-                <td style={{ padding: "8px" }}>
-                  <button
-                    onClick={() => handleAccessGym(gym)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 4,
-                      border: "1px solid #ccc",
-                      background: "#f0f0f0",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Access Gym
-                  </button>
-                  <button
-                    onClick={() => startAssign(gym.id)}
-                    style={{
-                      marginLeft: 8,
-                      padding: "6px 12px",
-                      borderRadius: 4,
-                      border: "1px solid #ccc",
-                      background: "#fff",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Add admin
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #ddd" }}>
+                <th style={{ textAlign: "left", padding: "8px" }}>Gym Name</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Slug</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Admins</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Actions</th>
               </tr>
-            ))}
-            {assignGymId ? (
-              <tr style={{ borderBottom: "1px solid #eee" }}>
-                <td colSpan={5} style={{ padding: "8px" }}>
-                  <form
-                    onSubmit={handleAssignAdmin}
-                    style={{
-                      display: "grid",
-                      gap: 8,
-                      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-                    }}
-                  >
-                    <input
-                      placeholder="Admin name"
-                      value={assignName}
-                      onChange={(e) => setAssignName(e.target.value)}
-                    />
-                    <input
-                      placeholder="Admin email"
-                      value={assignEmail}
-                      onChange={(e) => setAssignEmail(e.target.value)}
-                      name="superadmin-assign-email"
-                      autoComplete="off"
-                    />
-                    <input
-                      placeholder="Admin phone (+...)"
-                      value={assignPhone}
-                      onChange={(e) => setAssignPhone(e.target.value)}
-                    />
-                    <input
-                      placeholder="Temp password"
-                      type="password"
-                      value={assignPassword}
-                      onChange={(e) => setAssignPassword(e.target.value)}
-                      autoComplete="new-password"
-                    />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button disabled={saving} type="submit">
-                        {saving ? "Saving…" : "Save admin"}
-                      </button>
-                      <button type="button" onClick={cancelAssign}>
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {gyms.map((gym) => (
+                <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "8px" }}>{gym.name}</td>
+                  <td style={{ padding: "8px" }}>{gym.slug}</td>
+                  <td style={{ padding: "8px" }}>
+                    {gym.admins?.length ? (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {gym.admins.map((a) => (
+                          <div key={a.id} style={{ fontWeight: 600 }}>
+                            {a.name || a.email}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ opacity: 0.6 }}>No admins</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "8px" }}>
+                    <button
+                      onClick={() => handleAccessGym(gym)}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 4,
+                        border: "1px solid #ccc",
+                        background: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Access Gym
+                    </button>
+                    <button
+                      onClick={() => startAssign(gym.id)}
+                      style={{
+                        marginLeft: 8,
+                        padding: "6px 12px",
+                        borderRadius: 4,
+                        border: "1px solid #ccc",
+                        background: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Manage admins
+                    </button>
+                    <button
+                      onClick={() => startEditGym(gym)}
+                      style={{
+                        marginLeft: 8,
+                        padding: "6px 12px",
+                        borderRadius: 4,
+                        border: "1px solid #ccc",
+                        background: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Edit gym
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+
+      {showCreate ? (
+        <div
+          onClick={() => setShowCreate(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 50,
+            padding: 16,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(920px, 100%)", padding: 16 }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Create gym + admin</h3>
+              <button type="button" onClick={() => setShowCreate(false)}>
+                Close
+              </button>
+            </div>
+            <form
+              onSubmit={handleCreateGym}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
+              <input
+                placeholder="Gym name"
+                value={gymName}
+                onChange={(e) => setGymName(e.target.value)}
+              />
+              <input
+                placeholder="Gym slug (e.g. powergym)"
+                value={gymSlug}
+                onChange={(e) => setGymSlug(e.target.value)}
+              />
+              <input
+                placeholder="Admin full name"
+                value={adminName}
+                onChange={(e) => setAdminName(e.target.value)}
+              />
+              <input
+                placeholder="Admin email"
+                value={adminEmail}
+                onChange={(e) => setAdminEmail(e.target.value)}
+                name="superadmin-create-email"
+                autoComplete="off"
+              />
+              <select
+                value={adminCountryCode}
+                onChange={(e) => setAdminCountryCode(e.target.value)}
+              >
+                <option value="+254">Kenya (+254)</option>
+                <option value="+255">Tanzania (+255)</option>
+                <option value="+256">Uganda (+256)</option>
+                <option value="+250">Rwanda (+250)</option>
+                <option value="+257">Burundi (+257)</option>
+                <option value="+251">Ethiopia (+251)</option>
+              </select>
+              <input
+                placeholder="Admin phone (e.g. 712345678)"
+                value={adminPhoneLocal}
+                onChange={(e) => setAdminPhoneLocal(e.target.value)}
+              />
+              <input
+                placeholder="Admin temp password (min 6 chars)"
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+              <button disabled={saving}>
+                {saving ? "Creating…" : "Create gym"}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showAssign ? (
+        <div
+          onClick={cancelAssign}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 50,
+            padding: 16,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(860px, 100%)", padding: 16 }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Add admin</h3>
+              <button type="button" onClick={cancelAssign}>
+                Close
+              </button>
+            </div>
+            <div style={{ marginBottom: 8, fontWeight: 700 }}>Admins</div>
+            {(() => {
+              const gym = gyms.find((g) => g.id === assignGymId);
+              const admins = gym?.admins || [];
+              return (
+                <div className="table-scroll">
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <colgroup>
+                      <col style={{ width: "22%" }} />
+                      <col style={{ width: "24%" }} />
+                      <col style={{ width: "24%" }} />
+                      <col style={{ width: "30%" }} />
+                    </colgroup>
+                    <thead>
+                        <tr style={{ borderBottom: "1px solid #eee" }}>
+                          <th style={{ textAlign: "left", padding: "6px 2px" }}>Name</th>
+                          <th style={{ textAlign: "left", padding: "6px 2px" }}>Email</th>
+                          <th style={{ textAlign: "left", padding: "6px 2px" }}>Phone</th>
+                          <th style={{ textAlign: "left", padding: "6px 2px" }}>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                      {!admins.length ? (
+                        <tr>
+                          <td colSpan={4} style={{ padding: "8px 2px", opacity: 0.6 }}>
+                            No admins
+                          </td>
+                        </tr>
+                      ) : (
+                        admins.map((a) => (
+                          <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                            <td style={{ padding: "6px 2px", fontWeight: 600 }}>
+                              {a.name || "Admin"}
+                            </td>
+                            <td style={{ padding: "6px 2px" }}>
+                              <input
+                                value={emailEdits[a.id] ?? a.email ?? ""}
+                                onChange={(e) =>
+                                  handleAdminEmailChange(a.id, e.target.value)
+                                }
+                                placeholder="Email"
+                                style={{ width: "100%" }}
+                              />
+                            </td>
+                            <td style={{ padding: "6px 2px" }}>
+                              <input
+                                value={phoneEdits[a.id] ?? a.phoneE164 ?? ""}
+                                onChange={(e) =>
+                                  handleAdminPhoneChange(a.id, e.target.value)
+                                }
+                                placeholder="+254..."
+                                style={{ width: "100%" }}
+                              />
+                            </td>
+                            <td style={{ padding: "6px 2px" }}>
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "1fr 1fr",
+                                  gap: 4,
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => saveAdminEdits(a)}
+                                  disabled={!!adminSaving[a.id]}
+                                >
+                                  {adminSaving[a.id] ? "Saving…" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => resetAdminPassword(a)}
+                                  disabled={!!resetSaving[a.id]}
+                                >
+                                  {resetSaving[a.id] ? "Resetting…" : "Reset pwd"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                      <tr>
+                        <td style={{ padding: "6px 2px" }}>
+                          <input
+                            placeholder="Admin name"
+                            value={assignName}
+                            onChange={(e) => setAssignName(e.target.value)}
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td style={{ padding: "6px 2px" }}>
+                          <input
+                            placeholder="Admin email"
+                            value={assignEmail}
+                            onChange={(e) => setAssignEmail(e.target.value)}
+                            name="superadmin-assign-email"
+                            autoComplete="off"
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td style={{ padding: "6px 2px" }}>
+                          <input
+                            placeholder="Admin phone (+...)"
+                            value={assignPhone}
+                            onChange={(e) => setAssignPhone(e.target.value)}
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td style={{ padding: "6px 2px" }}>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 4,
+                            }}
+                          >
+                            <input
+                              placeholder="Temp password"
+                              type="password"
+                              value={assignPassword}
+                              onChange={(e) => setAssignPassword(e.target.value)}
+                              autoComplete="new-password"
+                            />
+                            <button
+                              disabled={saving}
+                              type="button"
+                              onClick={() => handleAssignAdmin()}
+                            >
+                              {saving ? "Saving…" : "Add admin"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
+
+      {showEditGym ? (
+        <div
+          onClick={cancelEditGym}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 50,
+            padding: 16,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(920px, 100%)", padding: 16 }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Edit gym</h3>
+              <button type="button" onClick={cancelEditGym}>
+                Close
+              </button>
+            </div>
+            <form
+              onSubmit={saveEditGym}
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "1fr 1fr auto",
+                alignItems: "end",
+                marginBottom: 16,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Gym name</span>
+                <input
+                  value={editGymName}
+                  onChange={(e) => setEditGymName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Gym slug</span>
+                <input
+                  value={editGymSlug}
+                  onChange={(e) => setEditGymSlug(e.target.value)}
+                />
+              </label>
+              <button disabled={saving} type="submit" style={{ height: 48 }}>
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+            </form>
+
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
