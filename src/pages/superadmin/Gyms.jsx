@@ -84,7 +84,7 @@ export default function Gyms() {
       startSimulation(admin.id);
 
       // 2️⃣ go to tenant-aware admin route
-      nav(`/g/${gym.slug}/admin`);
+      nav(`/${gym.slug}/admin`);
     },
     [startSimulation, nav]
   );

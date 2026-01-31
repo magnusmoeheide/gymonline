@@ -96,7 +96,7 @@ export default function SuperAdminSettings() {
           onSubmit={addSuperAdmin}
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
             gap: 8,
             alignItems: "center",
           }}
@@ -128,7 +128,6 @@ export default function SuperAdminSettings() {
           <button
             className="btn-primary"
             disabled={saving}
-            style={{ gridColumn: "1 / -1" }}
           >
             {saving ? "Saving…" : "Add superadmin"}
           </button>

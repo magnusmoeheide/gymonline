@@ -46,9 +46,9 @@ const SUPERADMIN_LINKS = [
 
 function Navbar({ mode = "member" }) {
   const nav = useNavigate();
-  const params = useParams(); // will include slug on /g/:slug/*
+  const params = useParams(); // will include slug on /:slug/*
   const slug = params?.slug ? String(params.slug) : "";
-  const basePath = slug ? `/g/${slug}` : "";
+  const basePath = slug ? `/${slug}` : "";
 
   const { userDoc, stopSimulation, isSimulated, realUserDoc } = useAuth();
 
@@ -60,7 +60,7 @@ function Navbar({ mode = "member" }) {
     // If there is NO slug in the URL, don't prefix anything (superadmin/global pages)
     if (!basePath) return raw;
 
-    // Prefix tenant basePath so links work under /g/:slug/*
+    // Prefix tenant basePath so links work under /:slug/*
     return raw.map((l) => ({
       ...l,
       to: join(basePath, l.to),
@@ -70,8 +70,8 @@ function Navbar({ mode = "member" }) {
   const handleLogout = useCallback(async () => {
     stopSimulation();
     await signOut(auth);
-    nav(basePath ? `${basePath}/login` : "/login");
-  }, [nav, stopSimulation, basePath]);
+    window.location.assign("/");
+  }, [stopSimulation]);
 
   const exitSim = useCallback(() => {
     stopSimulation();

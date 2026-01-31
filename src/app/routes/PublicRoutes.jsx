@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "../../pages/public/Login";
-import JoinGym from "../../pages/public/JoinGym";
+import CreateGym from "../../pages/public/CreateGym";
 import NotFound from "../../pages/public/NotFound";
 
 export default function PublicRoutes() {
@@ -8,7 +8,8 @@ export default function PublicRoutes() {
     <Routes>
       <Route index element={<Login />} />
       <Route path="login" element={<Login />} />
-      <Route path="join" element={<JoinGym />} />
+      <Route path="create" element={<CreateGym />} />
+      <Route path="join" element={<Navigate to="create" replace />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

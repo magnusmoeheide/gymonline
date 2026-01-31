@@ -7,7 +7,7 @@ export default function RequireAuth({ children }) {
   const loc = useLocation();
   const params = useParams();
   const slug = params?.slug ? String(params.slug) : "";
-  const tenantLogin = slug ? `/g/${slug}/login` : "/login";
+  const tenantLogin = slug ? `/${slug}/login` : "/login";
 
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
 

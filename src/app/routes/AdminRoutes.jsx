@@ -16,7 +16,7 @@ export default function AdminRoutes() {
   const slug = params?.slug ? String(params.slug) : "";
   const { isSimulated, userDoc, loading } = useAuth();
   const simIsMember = isSimulated && userDoc?.role === "MEMBER";
-  const simBase = slug ? `/g/${slug}` : userDoc?.gymSlug ? `/g/${userDoc.gymSlug}` : "";
+  const simBase = slug ? `/${slug}` : userDoc?.gymSlug ? `/${userDoc.gymSlug}` : "";
 
   if (!loading && simIsMember) {
     return <Navigate to={simBase ? `${simBase}/app` : "/login"} replace />;

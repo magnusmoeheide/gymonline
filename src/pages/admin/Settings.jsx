@@ -203,7 +203,8 @@ export default function Settings() {
       <h2>Settings</h2>
 
       <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        GymId: <b>{gymId || "-"}</b>
+        Any questions? Contact us on <b>mail@gymonline.co</b> or{" "}
+        <b>+254 721 499 429</b>
       </div>
 
       <p style={{ opacity: 0.8 }}>
@@ -271,7 +272,14 @@ export default function Settings() {
       <div style={{ fontSize: 13, opacity: 0.75 }}>
         Login link:{" "}
         {gymSlug ? (
-          <b>{`${window.location.origin}/g/${gymSlug}/login`}</b>
+          <a
+            href={`https://onlinegym.co/${gymSlug}/login`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontWeight: 700 }}
+          >
+            {`https://onlinegym.co/${gymSlug}/login`}
+          </a>
         ) : (
           <b>—</b>
         )}

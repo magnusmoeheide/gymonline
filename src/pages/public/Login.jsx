@@ -15,7 +15,7 @@ import useGymSlug from "../../hooks/useGymSlug";
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import { db } from "../../firebase/db";
 
-export default function Login() {
+export default function Login({ embedded = false }) {
   const nav = useNavigate();
   const { userDoc, realUserDoc, loading: authLoading } = useAuth();
 
@@ -40,7 +40,7 @@ export default function Login() {
     error: slugError,
   } = useGymSlug();
 
-  const tenantBasePath = basePath || (slug ? `/g/${slug}` : undefined);
+  const tenantBasePath = basePath || (slug ? `/${slug}` : undefined);
 
   const dbRef = useMemo(() => db, []);
 
@@ -195,7 +195,7 @@ export default function Login() {
     if (!slug) {
       const autoSlug = userDoc?.gymSlug || realUserDoc?.gymSlug;
       if (autoSlug) {
-        const base = `/g/${autoSlug}`;
+        const base = `/${autoSlug}`;
         const target = ["GYM_ADMIN", "STAFF"].includes(userDoc.role)
           ? `${base}/admin`
           : `${base}/app`;
@@ -286,7 +286,7 @@ export default function Login() {
     const docData = await resolveUserDoc(u);
     const role = docData?.role || "";
     const docSlug = docData?.gymSlug || "";
-    const base = slug ? `/g/${slug}` : docSlug ? `/g/${docSlug}` : "";
+    const base = slug ? `/${slug}` : docSlug ? `/${docSlug}` : "";
 
     if (role === "SUPER_ADMIN") {
       nav("/superadmin");
@@ -392,42 +392,48 @@ export default function Login() {
     const gym = gyms.find((g) => g.id === selectedGymId);
     console.log("[Login] enterSelectedGym", { selectedGymId, gym });
     if (!gym?.slug) return;
-    window.location.assign(`/g/${gym.slug}/login`);
+    window.location.assign(`/${gym.slug}/login`);
   }
 
-  const joinHref = tenantBasePath ? `${tenantBasePath}/join` : "/join";
+  const joinHref = tenantBasePath ? `${tenantBasePath}/create` : "/create";
+
+  const cardStyle = embedded
+    ? { width: "100%", maxWidth: embedded ? 420 : 440, padding: 0, border: "none", boxShadow: "none", background: "transparent" }
+    : { width: "100%", maxWidth: 440, padding: 22 };
 
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: embedded ? "unset" : "100vh",
         display: "grid",
         placeItems: "center",
-        padding: 24,
+        padding: embedded ? 0 : 24,
       }}
     >
       <div
         className="card"
-        style={{ width: "100%", maxWidth: 440, padding: 22 }}
+        style={cardStyle}
       >
-        <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-          {gymPublic?.loginLogoUrl ? (
-            <img
-              src={gymPublic.loginLogoUrl}
-              alt="Gym logo"
-              style={{ height: 42, objectFit: "contain" }}
-            />
-          ) : null}
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
-            {gymPublic?.name || "GymOnline"}
+        {!embedded ? (
+          <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+            {gymPublic?.loginLogoUrl ? (
+              <img
+                src={gymPublic.loginLogoUrl}
+                alt="Gym logo"
+                style={{ height: 42, objectFit: "contain" }}
+              />
+            ) : null}
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
+              {gymPublic?.name || "GymOnline"}
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.75 }}>
+              {gymPublic?.loginText ||
+                "Sign in to manage your membership and bundles."}
+            </div>
           </div>
-          <div style={{ fontSize: 13, opacity: 0.75 }}>
-            {gymPublic?.loginText ||
-              "Sign in to manage your membership and bundles."}
-          </div>
-        </div>
+        ) : null}
 
-        {slug ? (
+        {slug && !authLoading ? (
           <div style={{ opacity: 0.75, marginBottom: 14, fontSize: 13 }}>
             Gym: <b>{slug}</b>
             {slugLoading ? (
@@ -436,7 +442,7 @@ export default function Login() {
           </div>
         ) : null}
 
-        {slug && !slugLoading && !exists ? (
+        {slug && !slugLoading && !exists && !authLoading ? (
           <div style={{ marginBottom: 12, fontSize: 13, opacity: 0.85 }}>
             Gym <b>{slug}</b> is not registered. Create{" "}
             <span className="kbd">{`slugs/${slug}`}</span> →{" "}
@@ -444,16 +450,25 @@ export default function Login() {
           </div>
         ) : null}
 
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        {authLoading ? (
+          <div style={{ padding: "10px 0", fontSize: 14, opacity: 0.75 }}>
+            Loading…
+          </div>
+        ) : (
+          <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button
               type="button"
               onClick={() => setUsePhone(false)}
               style={{
                 background: !usePhone ? "#fff7ed" : "#fff",
                 borderColor: !usePhone ? "rgba(28,24,19,.25)" : undefined,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
+              <i className="fa-solid fa-envelope" aria-hidden="true" />
               Email
             </button>
             <button
@@ -462,77 +477,82 @@ export default function Login() {
               style={{
                 background: usePhone ? "#fff7ed" : "#fff",
                 borderColor: usePhone ? "rgba(28,24,19,.25)" : undefined,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
+              <i className="fa-solid fa-phone" aria-hidden="true" />
               Phone
             </button>
           </div>
 
-          {!usePhone ? (
-            <>
-              <input
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="username"
-              />
-              <input
-                placeholder="Password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </>
-          ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 8 }}>
-                <select
-                  value={countryCode}
-                  onChange={(e) => setCountryCode(e.target.value)}
-                >
-                  <option value="+254">Kenya (+254)</option>
-                  <option value="+255">Tanzania (+255)</option>
-                  <option value="+256">Uganda (+256)</option>
-                  <option value="+250">Rwanda (+250)</option>
-                  <option value="+257">Burundi (+257)</option>
-                  <option value="+251">Ethiopia (+251)</option>
-                </select>
+            {!usePhone ? (
+              <>
                 <input
-                  placeholder="Phone (e.g. 712345678)"
-                  value={phoneLocal}
-                  onChange={(e) => setPhoneLocal(e.target.value)}
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
                 />
-              </div>
-              {smsSent ? (
                 <input
-                  placeholder="SMS code"
-                  value={smsCode}
-                  onChange={(e) => setSmsCode(e.target.value)}
+                  placeholder="Password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
                 />
-              ) : null}
-            </>
-          )}
+              </>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 8 }}>
+                  <select
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value)}
+                  >
+                    <option value="+254">Kenya (+254)</option>
+                    <option value="+255">Tanzania (+255)</option>
+                    <option value="+256">Uganda (+256)</option>
+                    <option value="+250">Rwanda (+250)</option>
+                    <option value="+257">Burundi (+257)</option>
+                    <option value="+251">Ethiopia (+251)</option>
+                  </select>
+                  <input
+                    placeholder="Phone (e.g. 712345678)"
+                    value={phoneLocal}
+                    onChange={(e) => setPhoneLocal(e.target.value)}
+                  />
+                </div>
+                {smsSent ? (
+                  <input
+                    placeholder="SMS code"
+                    value={smsCode}
+                    onChange={(e) => setSmsCode(e.target.value)}
+                  />
+                ) : null}
+              </>
+            )}
 
-          <button
-            className="btn-primary"
-            disabled={busy || smsBusy || authLoading || slugLoading}
-          >
-            {usePhone
-              ? smsSent
-                ? smsBusy
-                  ? "Verifying…"
-                  : "Verify code"
-                : smsBusy
-                ? "Sending code…"
-                : "Send code"
-              : busy
-              ? "Signing in…"
-              : "Sign in"}
-          </button>
-        </form>
+            <button
+              className="btn-primary"
+              disabled={busy || smsBusy || authLoading || slugLoading}
+            >
+              {usePhone
+                ? smsSent
+                  ? smsBusy
+                    ? "Verifying…"
+                    : "Verify code"
+                  : smsBusy
+                  ? "Sending code…"
+                  : "Send code"
+                : busy
+                ? "Signing in…"
+                : "Sign in"}
+            </button>
+          </form>
+        )}
 
-        {err ? (
+        {err && !authLoading ? (
           <div
             style={{
               marginTop: 10,
@@ -540,7 +560,7 @@ export default function Login() {
               borderRadius: 12,
               border: "1px solid rgba(220, 38, 38, .35)",
               background: "rgba(220, 38, 38, .10)",
-              color: "rgba(255,255,255,.92)",
+              color: "rgba(28,24,19,.9)",
               fontSize: 13,
             }}
           >
@@ -548,25 +568,27 @@ export default function Login() {
           </div>
         ) : null}
 
-        <div style={{ marginTop: 16, fontSize: 13, opacity: 0.9 }}>
-          New gym/member?{" "}
-          <a
-            href={joinHref}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid rgba(28,24,19,.15)",
-              background: "#fff7ed",
-              fontWeight: 700,
-              textDecoration: "none",
-            }}
-          >
-            Create / Join gym
-          </a>
-        </div>
+        {!authLoading ? (
+          <div style={{ marginTop: 16, fontSize: 13, opacity: 0.9 }}>
+            New gym/member?{" "}
+            <a
+              href={joinHref}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 999,
+                border: "1px solid rgba(28,24,19,.15)",
+                background: "#fff7ed",
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+            Create gym
+            </a>
+          </div>
+        ) : null}
         <div id="recaptcha-container" />
       </div>
     </div>

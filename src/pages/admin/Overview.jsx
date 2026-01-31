@@ -9,8 +9,9 @@ export default function Overview() {
   const nav = useNavigate();
   const params = useParams();
   const slug = params?.slug ? String(params.slug) : "";
-  const { userDoc, startSimulation, stopSimulation, isSimulated } = useAuth();
+  const { userDoc, realUserDoc, startSimulation, stopSimulation, isSimulated } = useAuth();
   const gymId = userDoc?.gymId;
+  const isSuperAdmin = realUserDoc?.role === "SUPER_ADMIN";
 
   const [members, setMembers] = useState([]);
   const [subs, setSubs] = useState([]);
@@ -161,7 +162,7 @@ export default function Overview() {
     (uid) => {
       if (!uid) return;
       startSimulation(uid);
-      const base = slug ? `/g/${slug}` : userDoc?.gymSlug ? `/g/${userDoc.gymSlug}` : "";
+      const base = slug ? `/${slug}` : userDoc?.gymSlug ? `/${userDoc.gymSlug}` : "";
       nav(base ? `${base}/app` : "/app", { replace: true });
     },
     [startSimulation, nav, slug, userDoc]
@@ -169,7 +170,7 @@ export default function Overview() {
 
   const onStop = useCallback(() => {
     stopSimulation();
-    const base = slug ? `/g/${slug}` : userDoc?.gymSlug ? `/g/${userDoc.gymSlug}` : "";
+    const base = slug ? `/${slug}` : userDoc?.gymSlug ? `/${userDoc.gymSlug}` : "";
     nav(base ? `${base}/admin` : "/admin", { replace: true });
   }, [stopSimulation, nav, slug, userDoc]);
 
@@ -410,7 +411,41 @@ export default function Overview() {
       <div>
         <h3>Simulate member</h3>
 
-        {isSimulated ? (
+        {isSuperAdmin ? (
+          <div
+            className="card"
+            style={{
+              padding: 12,
+              display: "grid",
+              gap: 8,
+              maxWidth: 520,
+            }}
+          >
+            {isSimulated ? (
+              <div>
+                Simulating as:{" "}
+                <b>{userDoc?.email || userDoc?.name || simUserId}</b>
+              </div>
+            ) : (
+              <div style={{ opacity: 0.7 }}>
+                Not simulating anyone.
+              </div>
+            )}
+            <select
+              defaultValue=""
+              onChange={(e) => onStart(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">Select member to simulate</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.phoneE164})
+                </option>
+              ))}
+            </select>
+            {isSimulated ? <button onClick={onStop}>Exit simulation</button> : null}
+          </div>
+        ) : isSimulated ? (
           <div
             className="card"
             style={{

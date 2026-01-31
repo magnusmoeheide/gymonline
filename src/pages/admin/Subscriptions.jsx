@@ -94,6 +94,20 @@ function memberLabel(member) {
 
 const FILTER_KEY = "admin_subscriptions_revenue_filter_v1";
 const MEMBER_FILTER_KEY = "admin_subscriptions_member_filter_v1";
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
 export default function Subscriptions() {
   const { userDoc } = useAuth();
@@ -587,69 +601,77 @@ export default function Subscriptions() {
       {/* Revenue filters */}
       <div
         style={{
-          display: "flex",
+          display: "grid",
           gap: 10,
-          alignItems: "center",
-          flexWrap: "wrap",
-          padding: "10px 12px",
+          padding: "12px 14px",
           border: "1px solid #eee",
           borderRadius: 10,
           marginBottom: 14,
           background: "#fff",
         }}
       >
-        <div style={{ fontWeight: 700 }}>Revenue</div>
-
-        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ fontSize: 13, opacity: 0.8 }}>Mode</span>
-          <select
-            value={filterMode}
-            onChange={(e) => setFilterMode(e.target.value)}
+        <div style={{ fontWeight: 800 }}>
+          {filterMode === "month"
+            ? `Revenue for ${MONTH_NAMES[Math.max(0, Math.min(11, filterMonth - 1))]} ${filterYear}`
+            : `Revenue for the year of ${filterYear}`}{" "}
+          is:{" "}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              padding: "2px 8px",
+              borderRadius: 999,
+              border: "1px solid rgba(15,118,110,.35)",
+              background: "rgba(15,118,110,.08)",
+              color: "#0f766e",
+              fontWeight: 900,
+            }}
           >
-            <option value="month">Month</option>
-            <option value="year">Year</option>
-          </select>
-        </label>
+            {money(revenue.total)} {userDoc?.currency || ""}
+          </span>
+        </div>
 
-        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ fontSize: 13, opacity: 0.8 }}>Year</span>
-          <select
-            value={filterYear}
-            onChange={(e) => setFilterYear(Number(e.target.value))}
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {filterMode === "month" ? (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 13, opacity: 0.8 }}>Month</span>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>Mode</span>
             <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(Number(e.target.value))}
+              value={filterMode}
+              onChange={(e) => setFilterMode(e.target.value)}
             >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                <option key={m} value={m}>
-                  {String(m).padStart(2, "0")}
+              <option value="month">Month</option>
+              <option value="year">Year</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>Year</span>
+            <select
+              value={filterYear}
+              onChange={(e) => setFilterYear(Number(e.target.value))}
+            >
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
                 </option>
               ))}
             </select>
           </label>
-        ) : null}
 
-        <div style={{ marginLeft: "auto", fontWeight: 800 }}>
-          {money(revenue.total)} {userDoc?.currency || ""}
-        </div>
-
-        <div style={{ width: "100%", fontSize: 12, opacity: 0.65 }}>
-          Period: {revenue.periodStart.toISOString().slice(0, 10)} →{" "}
-          {new Date(revenue.periodEndExcl.getTime() - 1)
-            .toISOString()
-            .slice(0, 10)}
+          {filterMode === "month" ? (
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 13, opacity: 0.8 }}>Month</span>
+              <select
+                value={filterMonth}
+                onChange={(e) => setFilterMonth(Number(e.target.value))}
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {MONTH_NAMES[m - 1]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
       </div>
 
@@ -994,14 +1016,18 @@ export default function Subscriptions() {
         style={{
           marginTop: 6,
           marginBottom: 14,
-          padding: "10px 12px",
-          border: "1px solid #eee",
-          borderRadius: 10,
+          padding: "12px 14px",
+          border: "1px solid rgba(28,24,19,.08)",
+          borderRadius: 14,
           background: "#fff",
+          boxShadow: "0 10px 24px rgba(30,30,50,0.05)",
         }}
       >
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>
+        <div style={{ fontWeight: 800, marginBottom: 6 }}>
           Filter subscriptions by member
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 10 }}>
+          Quickly narrow the table to a single member.
         </div>
 
         <div style={{ position: "relative", maxWidth: 520 }}>

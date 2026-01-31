@@ -4,6 +4,8 @@ import MemberRoutes from "./app/routes/MemberRoutes";
 import AdminRoutes from "./app/routes/AdminRoutes";
 import SuperAdminRoutes from "./app/routes/SuperAdminRoutes";
 import NotFound from "./pages/public/NotFound";
+import Landing from "./pages/public/Landing";
+import CreateGym from "./pages/public/CreateGym";
 
 export default function App() {
   return (
@@ -12,14 +14,18 @@ export default function App() {
         {/* Superadmin (global, no tenant) */}
         <Route path="/superadmin/*" element={<SuperAdminRoutes />} />
 
-        {/* Tenant-aware */}
-        <Route path="/g/:slug/admin/*" element={<AdminRoutes />} />
-        <Route path="/g/:slug/app/*" element={<MemberRoutes />} />
-        <Route path="/g/:slug/*" element={<PublicRoutes />} />
+        {/* Main landing */}
+        <Route path="/" element={<Landing />} />
 
-        {/* Global public (login, join, etc) */}
+        {/* Global public (login, create, etc) */}
+        <Route path="/create/*" element={<CreateGym />} />
+        <Route path="/join/*" element={<Navigate to="/create" replace />} />
         <Route path="/login/*" element={<PublicRoutes />} />
-        <Route path="/*" element={<PublicRoutes />} />
+
+        {/* Tenant-aware */}
+        <Route path="/:slug/admin/*" element={<AdminRoutes />} />
+        <Route path="/:slug/app/*" element={<MemberRoutes />} />
+        <Route path="/:slug/*" element={<PublicRoutes />} />
 
         {/* Legacy paths → force login */}
         <Route path="/admin/*" element={<Navigate to="/login" replace />} />
