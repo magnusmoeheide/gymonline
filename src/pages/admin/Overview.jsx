@@ -133,44 +133,38 @@ export default function Overview() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
           gap: 12,
         }}
       >
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Current active subscriptions
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Current active subscriptions
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>
+              {busy ? "—" : activeSubs.length}
+            </div>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>
-            {busy ? "—" : activeSubs.length}
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Active members / total
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>
+              {busy ? "—" : `${activeMemberCount} / ${members.length}`}
+            </div>
           </div>
-        </div>
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Active members / total
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this year</div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>
+              {busy ? "—" : money(revenueStats.yearTotal)}
+            </div>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>
-            {busy ? "—" : `${activeMemberCount} / ${members.length}`}
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this month</div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>
+              {busy ? "—" : money(revenueStats.monthTotal)}
+            </div>
           </div>
-        </div>
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this year</div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>
-            {busy ? "—" : money(revenueStats.yearTotal)}
-          </div>
-        </div>
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this month</div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>
-            {busy ? "—" : money(revenueStats.monthTotal)}
-          </div>
-        </div>
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Cash balance</div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>
-            {busy ? "—" : money(gym?.cashBalance)}
-          </div>
-        </div>
       </div>
 
       <div>

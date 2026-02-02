@@ -38,6 +38,7 @@ const ADMIN_LINKS = [
   { to: "/admin/communication", label: "Communication", icon: "fa-solid fa-message" },
   { to: "/admin/plans", label: "Plans", icon: "fa-solid fa-calendar-check" },
   { to: "/admin/products", label: "Products", icon: "fa-solid fa-box-open" },
+  { to: "/admin/balance", label: "Balance", icon: "fa-solid fa-wallet" },
   { to: "/admin/settings", label: "Settings", icon: "fa-solid fa-gear" },
 ];
 

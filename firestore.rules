@@ -15,9 +15,17 @@ service cloud.firestore {
 
     function role() { return userDoc().role; }
     function gymId() { return userDoc().gymId; }
+    function resolvedGymId() {
+      return exists(/databases/$(database)/documents/slugs/$(gymId()))
+        ? get(/databases/$(database)/documents/slugs/$(gymId())).data.gymId
+        : gymId();
+    }
 
     function isSuperAdmin() {
       return isSignedIn() && hasUserDoc() && role() == "SUPER_ADMIN";
+    }
+    function isSuperAdminToken() {
+      return isSignedIn() && request.auth.token.role == "SUPER_ADMIN";
     }
 
     function isGymAdmin() {
@@ -126,6 +134,15 @@ service cloud.firestore {
 
     match /smsLogs/{id} {
       allow read: if isStaff() && sameGymExisting();
+      allow write: if false;
+    }
+
+    match /balanceTransactions/{id} {
+      allow read: if isSignedIn()
+        && (isSuperAdmin()
+          || isSuperAdminToken()
+          || resource.data.gymId == gymId()
+          || resource.data.gymId == resolvedGymId());
       allow write: if false;
     }
   }

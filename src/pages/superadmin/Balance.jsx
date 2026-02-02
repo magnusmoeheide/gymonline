@@ -1,8 +1,10 @@
 // src/pages/superadmin/Balance.jsx
 import { useEffect, useState, useCallback } from "react";
-import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import { functions } from "../../firebase/functionsClient";
 
 export default function Balance() {
   const { realUserDoc } = useAuth();
@@ -45,9 +47,13 @@ export default function Balance() {
         return;
       }
       const clamped = Math.max(0, next);
+      const current = Number(gym.cashBalance) || 0;
+      const delta = clamped - current;
+      if (delta === 0) return;
       setSaving((prev) => ({ ...prev, [gym.id]: true }));
       try {
-        await updateDoc(doc(db, "gyms", gym.id), { cashBalance: clamped });
+        const fn = httpsCallable(functions, "adjustGymBalance");
+        await fn({ gymId: gym.id, amount: delta, reason: "admin_adjust" });
         setGyms((prev) =>
           prev.map((g) => (g.id === gym.id ? { ...g, cashBalance: clamped } : g))
         );

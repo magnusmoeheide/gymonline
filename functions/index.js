@@ -22,6 +22,9 @@ const db = getFirestore(admin.app(), DB_ID);
 const TWILIO_ACCOUNT_SID = defineSecret("TWILIO_ACCOUNT_SID");
 const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
 const TWILIO_DEFAULT_FROM = defineSecret("TWILIO_DEFAULT_FROM");
+const AFRICASTALKING_USERNAME = defineSecret("AFRICASTALKING_USERNAME");
+const AFRICASTALKING_API_KEY = defineSecret("AFRICASTALKING_API_KEY");
+// const AFRICASTALKING_SENDER_ID = defineSecret("AFRICASTALKING_SENDER_ID");
 
 
 // Helpers
@@ -33,6 +36,82 @@ async function getUserDoc(uid) {
 async function twilioClient() {
   const twilio = require("twilio");
   return twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+}
+
+async function africasTalkingSendSms({ to, message, from }) {
+  const username = AFRICASTALKING_USERNAME.value();
+  const apiKey = AFRICASTALKING_API_KEY.value();
+  const baseUrl =
+    username === "sandbox"
+      ? "https://api.sandbox.africastalking.com/version1/messaging"
+      : "https://api.africastalking.com/version1/messaging";
+
+  const params = new URLSearchParams();
+  params.set("username", username);
+  params.set("to", Array.isArray(to) ? to.join(",") : String(to || ""));
+  params.set("message", message);
+  if (from) params.set("from", from);
+
+  const res = await fetch(baseUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Apikey: apiKey,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: params.toString(),
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = data?.SMSMessageData?.Message || res.statusText || "Unknown error";
+    throw new HttpsError("internal", `Africa's Talking SMS failed: ${msg}`);
+  }
+
+  return data || {};
+}
+
+async function africasTalkingGetAppData() {
+  const username = AFRICASTALKING_USERNAME.value();
+  const apiKey = AFRICASTALKING_API_KEY.value();
+  const baseUrl =
+    username === "sandbox"
+      ? "https://api.sandbox.africastalking.com/version1/user"
+      : "https://api.africastalking.com/version1/user";
+  const url = `${baseUrl}?username=${encodeURIComponent(username)}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Apikey: apiKey,
+    },
+  });
+
+  const rawText = await res.text();
+  let balance = null;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(rawText);
+    const b =
+      parsed?.UserData?.balance ||
+      parsed?.balance ||
+      parsed?.data?.balance ||
+      null;
+    if (b) balance = String(b);
+  } catch {
+    const m = rawText.match(/<balance>([^<]+)<\/balance>/i);
+    if (m) balance = m[1];
+  }
+
+  if (!res.ok) {
+    throw new HttpsError(
+      "internal",
+      `Africa's Talking app data failed: ${res.status} ${res.statusText}`
+    );
+  }
+
+  return { raw: rawText, balance, parsed };
 }
 
 function renderTemplate(tpl, vars) {
@@ -49,6 +128,37 @@ function isoDate(ts) {
   return d.toISOString().slice(0, 10);
 }
 
+function parseCostValue(cost) {
+  if (!cost) return 0;
+  const s = String(cost).replace(/,/g, " ");
+  const m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
+  return m ? Number(m[1]) : 0;
+}
+
+async function logBalanceTransaction({
+  gymId,
+  amount,
+  type,
+  reason,
+  balanceBefore,
+  balanceAfter,
+  createdBy,
+  meta,
+}) {
+  if (!gymId || !amount) return;
+  await db.collection("balanceTransactions").add({
+    gymId,
+    amount,
+    type,
+    reason: reason || null,
+    balanceBefore,
+    balanceAfter,
+    createdBy: createdBy || null,
+    meta: meta || null,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
 function assertCallerGym(caller) {
   if (!caller?.gymId) {
     throw new HttpsError("failed-precondition", "Caller missing gymId");
@@ -62,6 +172,63 @@ function assertCallerGym(caller) {
       'Caller gymId is "global". Fix your admin users/{uid}.gymId to the real gymId.'
     );
   }
+}
+
+async function resolveCallerGym(caller, requestData = {}) {
+  if (!caller?.gymId) {
+    throw new HttpsError("failed-precondition", "Caller missing gymId");
+  }
+  let gymId = String(caller.gymId || "").trim();
+  let gymSlug = String(caller.gymSlug || "").trim() || null;
+
+  if (gymId === "global" || gymId === "__global__") {
+    if (caller?.role === "SUPER_ADMIN") {
+      const reqGymId = String(requestData?.gymId || "").trim();
+      const reqGymSlug = normalizeSlug(requestData?.gymSlug || requestData?.slug);
+      if (reqGymId) {
+        gymId = reqGymId;
+        gymSlug = reqGymSlug || gymSlug;
+      } else if (reqGymSlug) {
+        gymSlug = reqGymSlug;
+        const slugSnap = await db.doc(`slugs/${gymSlug}`).get();
+        if (!slugSnap.exists) {
+          throw new HttpsError("not-found", "Gym slug not found");
+        }
+        gymId = String(slugSnap.data()?.gymId || "").trim();
+      } else {
+        throw new HttpsError(
+          "failed-precondition",
+          "Super admin must pass gymId or gymSlug"
+        );
+      }
+    } else {
+      throw new HttpsError(
+        "failed-precondition",
+        'Caller gymId is "global". Fix your admin users/{uid}.gymId to the real gymId.'
+      );
+    }
+  }
+
+  // If caller.gymId is actually a slug, resolve it
+  if (!gymSlug) {
+    const slugSnap = await db.doc(`slugs/${gymId}`).get();
+    if (slugSnap.exists) {
+      const gid = slugSnap.data()?.gymId || null;
+      if (gid) {
+        gymSlug = gymId;
+        gymId = gid;
+      }
+    }
+  }
+
+  if (!gymSlug) {
+    const gymSnap = await db.doc(`gyms/${gymId}`).get();
+    if (gymSnap.exists) {
+      gymSlug = gymSnap.data()?.slug || null;
+    }
+  }
+
+  return { gymId, gymSlug };
 }
 
 function requireRole(caller, allowed) {
@@ -1104,6 +1271,54 @@ exports.updateOwnProfile = onCall(
   }
 );
 
+exports.adjustGymBalance = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["SUPER_ADMIN"]);
+
+    const gymId = String(request.data?.gymId || "").trim();
+    const amount = Number(request.data?.amount);
+    const reason = String(request.data?.reason || "").trim() || "admin_adjust";
+
+    if (!gymId) throw new HttpsError("invalid-argument", "gymId required");
+    if (!Number.isFinite(amount))
+      throw new HttpsError("invalid-argument", "amount must be a number");
+
+    const ref = db.doc(`gyms/${gymId}`);
+    let before = 0;
+    let after = 0;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpsError("not-found", "Gym not found");
+      before = Number(snap.data()?.cashBalance) || 0;
+      after = Math.max(0, before + amount);
+      tx.update(ref, {
+        cashBalance: after,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    if (amount !== 0) {
+      await logBalanceTransaction({
+        gymId,
+        amount,
+        type: amount > 0 ? "credit" : "debit",
+        reason,
+        balanceBefore: before,
+        balanceAfter: after,
+        createdBy: request.auth.uid,
+      });
+    }
+
+    return { ok: true, gymId, balanceBefore: before, balanceAfter: after };
+  }
+);
+
 exports.setGymPaymentStatus = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -1278,5 +1493,338 @@ exports.runExpiryReminders = onSchedule(
     for (const d of exp7Snap.docs) await sendKind(d, "d7");
     for (const d of exp1Snap.docs) await sendKind(d, "d1");
     for (const d of expiredSnap.docs) await sendKind(d, "expired");
+  }
+);
+
+exports.sendBroadcastSms = onCall(
+  {
+    region: "us-central1",
+    secrets: [
+      AFRICASTALKING_USERNAME,
+      AFRICASTALKING_API_KEY,
+      // AFRICASTALKING_SENDER_ID,
+    ],
+  },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+    const { gymId } = await resolveCallerGym(caller, request.data);
+    const gymSnap = await db.doc(`gyms/${gymId}`).get();
+    if (!gymSnap.exists)
+      throw new HttpsError("failed-precondition", "Gym not found");
+    const gym = gymSnap.data() || {};
+    const startingCashBalance = Number(gym.cashBalance) || 0;
+    if (startingCashBalance <= 0) {
+      throw new HttpsError("failed-precondition", "Insufficient SMS balance");
+    }
+
+    let preflight = null;
+    try {
+      const appData = await africasTalkingGetAppData();
+      preflight = {
+        ok: true,
+        balance: appData.balance,
+        raw: appData.raw,
+        fetchedAt: FieldValue.serverTimestamp(),
+      };
+    } catch (e) {
+      preflight = {
+        ok: false,
+        error: e?.message || "Failed to fetch app data",
+        fetchedAt: FieldValue.serverTimestamp(),
+      };
+      throw e;
+    }
+
+    const audience = String(request.data?.audience || "activeSubscriptions");
+    const message = String(request.data?.message || "").trim();
+    const selectedUserIds = Array.isArray(request.data?.selectedUserIds)
+      ? request.data.selectedUserIds.map((x) => String(x))
+      : [];
+
+    if (!message) throw new HttpsError("invalid-argument", "message required");
+    if (message.length > 1000)
+      throw new HttpsError("invalid-argument", "message too long");
+
+    const membersSnap = await db
+      .collection("users")
+      .where("gymId", "==", gymId)
+      .where("role", "==", "MEMBER")
+      .get();
+    const members = membersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    let allowedIds = null;
+    if (audience === "custom") {
+      if (!selectedUserIds.length)
+        throw new HttpsError("invalid-argument", "No members selected");
+      allowedIds = new Set(selectedUserIds);
+    } else if (audience === "activeSubscriptions") {
+      const now = new Date();
+      const subsSnap = await db
+        .collection("subscriptions")
+        .where("gymId", "==", gymId)
+        .where("status", "==", "active")
+        .get();
+      allowedIds = new Set();
+      for (const sDoc of subsSnap.docs) {
+        const s = sDoc.data();
+        const start = s.startDate?.toDate ? s.startDate.toDate() : null;
+        const end = s.endDate?.toDate ? s.endDate.toDate() : null;
+        if (start && start > now) continue;
+        if (end && end < now) continue;
+        if (s.userId) allowedIds.add(String(s.userId));
+      }
+    } else if (audience === "activeMembers") {
+      allowedIds = new Set(
+        members.filter((m) => (m.status || "active") === "active").map((m) => m.id)
+      );
+    }
+
+    const recipients = members
+      .filter((m) => {
+        if (!m.phoneE164) return false;
+        if (allowedIds && !allowedIds.has(m.id)) return false;
+        return true;
+      })
+      .map((m) => ({
+        userId: m.id,
+        phoneE164: String(m.phoneE164).trim(),
+        name: m.name || "",
+      }));
+
+    if (!recipients.length)
+      throw new HttpsError("failed-precondition", "No recipients found");
+
+    const broadcastRef = db.collection("smsBroadcasts").doc();
+    const broadcastId = broadcastRef.id;
+    await broadcastRef.set({
+      gymId,
+      createdBy: request.auth.uid,
+      message,
+      audience,
+      totalRecipients: recipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      status: "sending",
+      providerPreflight: preflight,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    // Africa's Talking can use a default sender when "from" is omitted.
+    const from = gym.smsFrom || undefined;
+
+    const BATCH_SIZE = 100;
+    const LOG_BATCH_SIZE = 400;
+    let sentCount = 0;
+    let failedCount = 0;
+    let totalCost = 0;
+    let logBuffer = [];
+
+    async function flushLogs() {
+      if (!logBuffer.length) return;
+      let batch = db.batch();
+      let count = 0;
+      for (const { ref, data } of logBuffer) {
+        batch.set(ref, data);
+        count += 1;
+        if (count >= LOG_BATCH_SIZE) {
+          await batch.commit();
+          batch = db.batch();
+          count = 0;
+        }
+      }
+      if (count) await batch.commit();
+      logBuffer = [];
+    }
+
+    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      const chunk = recipients.slice(i, i + BATCH_SIZE);
+      const numbers = chunk.map((r) => r.phoneE164);
+      let response = null;
+      let error = null;
+
+      try {
+        response = await africasTalkingSendSms({
+          to: numbers,
+          message,
+          from,
+        });
+      } catch (e) {
+        error = e;
+      }
+
+      const respList = response?.SMSMessageData?.Recipients || [];
+      const respByNumber = new Map();
+      for (const r of respList) {
+        const num = String(r.number || r.phoneNumber || "").trim();
+        if (num) respByNumber.set(num, r);
+      }
+      const responseSnapshot = response || (error ? { error: error.message } : null);
+
+      for (const r of chunk) {
+        const resp = respByNumber.get(r.phoneE164);
+        const status = resp?.status || (error ? "Failed" : "Sent");
+        const statusCode = resp?.statusCode || null;
+        const messageId = resp?.messageId || null;
+        const cost = resp?.cost || null;
+        const costValue = parseCostValue(cost);
+        const statusCodeNum = Number(statusCode);
+        const success =
+          (Number.isFinite(statusCodeNum) &&
+            statusCodeNum >= 100 &&
+            statusCodeNum < 200) ||
+          String(status).toLowerCase() === "success";
+
+        if (success) sentCount += 1;
+        else failedCount += 1;
+        totalCost += costValue;
+
+        logBuffer.push({
+          ref: db.doc(`smsLogs/${broadcastId}_${r.userId}`),
+          data: {
+            gymId,
+            broadcastId,
+            userId: r.userId,
+            to: r.phoneE164,
+            message,
+            provider: "africastalking",
+            status,
+            statusCode,
+            messageId,
+            cost,
+            error: error?.message || null,
+            response: responseSnapshot,
+            sentAt: FieldValue.serverTimestamp(),
+          },
+        });
+      }
+
+      if (logBuffer.length >= LOG_BATCH_SIZE) {
+        await flushLogs();
+      }
+    }
+
+    await flushLogs();
+
+    await broadcastRef.set(
+      {
+        sentCount,
+        failedCount,
+        totalCost,
+        status: "sent",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    if (totalCost > 0) {
+      let before = 0;
+      let after = 0;
+      await db.runTransaction(async (tx) => {
+        const ref = db.doc(`gyms/${gymId}`);
+        const snap = await tx.get(ref);
+        if (!snap.exists) return;
+        before = Number(snap.data()?.cashBalance) || 0;
+        after = Math.max(0, before - totalCost);
+        tx.update(ref, {
+          cashBalance: after,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+      await logBalanceTransaction({
+        gymId,
+        amount: -totalCost,
+        type: "debit",
+        reason: "sms",
+        balanceBefore: before,
+        balanceAfter: after,
+        createdBy: request.auth.uid,
+        meta: { broadcastId },
+      });
+    }
+
+    return {
+      ok: true,
+      broadcastId,
+      totalRecipients: recipients.length,
+      sentCount,
+      failedCount,
+    };
+  }
+);
+
+exports.deleteSmsLog = onCall({ region: "us-central1" }, async (request) => {
+  if (!request.auth)
+    throw new HttpsError("unauthenticated", "Sign in required");
+
+  const caller = await getUserDoc(request.auth.uid);
+  requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+  const { gymId } = await resolveCallerGym(caller, request.data);
+
+  const logId = String(request.data?.logId || "").trim();
+  if (!logId) throw new HttpsError("invalid-argument", "logId required");
+
+  const logRef = db.doc(`smsLogs/${logId}`);
+  const logSnap = await logRef.get();
+  if (!logSnap.exists) throw new HttpsError("not-found", "Log not found");
+
+  const data = logSnap.data() || {};
+  if (data.gymId !== gymId)
+    throw new HttpsError("permission-denied", "Not allowed");
+
+  await logRef.delete();
+
+  const broadcastId = String(data.broadcastId || "").trim();
+  if (broadcastId) {
+    const othersSnap = await db
+      .collection("smsLogs")
+      .where("broadcastId", "==", broadcastId)
+      .where("gymId", "==", gymId)
+      .limit(1)
+      .get();
+    if (othersSnap.empty) {
+      await db.doc(`smsBroadcasts/${broadcastId}`).delete().catch(() => {});
+    }
+  }
+  return { ok: true };
+});
+
+exports.listBalanceTransactions = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN", "STAFF"]);
+    const { gymId } = await resolveCallerGym(caller, request.data);
+
+    const snap = await db
+      .collection("balanceTransactions")
+      .where("gymId", "==", gymId)
+      .orderBy("createdAt", "desc")
+      .limit(50)
+      .get();
+
+    const items = snap.docs.map((d) => {
+      const data = d.data() || {};
+      const createdAt = data.createdAt;
+      return {
+        id: d.id,
+        gymId: data.gymId || null,
+        amount: data.amount || 0,
+        type: data.type || null,
+        reason: data.reason || null,
+        balanceBefore: data.balanceBefore || null,
+        balanceAfter: data.balanceAfter || null,
+        createdAtMs: createdAt?.toMillis ? createdAt.toMillis() : null,
+      };
+    });
+
+    return { ok: true, items };
   }
 );

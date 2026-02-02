@@ -6,6 +6,7 @@ import Overview from "../../pages/admin/Overview";
 import Members from "../../pages/admin/Members";
 import Subscriptions from "../../pages/admin/Subscriptions";
 import Revenue from "../../pages/admin/Revenue";
+import Balance from "../../pages/admin/Balance";
 import Plans from "../../pages/admin/Plans";
 import Products from "../../pages/admin/Products";
 import Orders from "../../pages/admin/Orders";
@@ -34,6 +35,7 @@ export default function AdminRoutes() {
             <Route path="members" element={<Members />} />
             <Route path="subscriptions" element={<Subscriptions />} />
             <Route path="revenue" element={<Revenue />} />
+            <Route path="balance" element={<Balance />} />
             <Route path="plans" element={<Plans />} />
             <Route path="products" element={<Products />} />
             <Route path="orders" element={<Orders />} />
