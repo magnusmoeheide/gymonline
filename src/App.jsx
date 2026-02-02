@@ -6,6 +6,8 @@ import SuperAdminRoutes from "./app/routes/SuperAdminRoutes";
 import NotFound from "./pages/public/NotFound";
 import Landing from "./pages/public/Landing";
 import CreateGym from "./pages/public/CreateGym";
+import Terms from "./pages/public/Terms";
+import Privacy from "./pages/public/Privacy";
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
 
         {/* Main landing */}
         <Route path="/" element={<Landing />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
 
         {/* Global public (login, create, etc) */}
         <Route path="/create/*" element={<CreateGym />} />

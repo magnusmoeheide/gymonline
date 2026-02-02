@@ -25,6 +25,9 @@ const TWILIO_DEFAULT_FROM = defineSecret("TWILIO_DEFAULT_FROM");
 const AFRICASTALKING_USERNAME = defineSecret("AFRICASTALKING_USERNAME");
 const AFRICASTALKING_API_KEY = defineSecret("AFRICASTALKING_API_KEY");
 // const AFRICASTALKING_SENDER_ID = defineSecret("AFRICASTALKING_SENDER_ID");
+const AWS_ACCESS_KEY_ID = defineSecret("AWS_ACCESS_KEY_ID");
+const AWS_SECRET_ACCESS_KEY = defineSecret("AWS_SECRET_ACCESS_KEY");
+const AWS_REGION = defineSecret("AWS_REGION");
 
 
 // Helpers
@@ -114,12 +117,70 @@ async function africasTalkingGetAppData() {
   return { raw: rawText, balance, parsed };
 }
 
+async function sendSesBatch({
+  recipients,
+  subject,
+  text,
+  html,
+  fromEmail,
+  fromName,
+  replyTo,
+}) {
+  if (!recipients?.length) return { ok: true };
+  const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
+  const client = new SESv2Client({
+    region: AWS_REGION.value(),
+    credentials: {
+      accessKeyId: AWS_ACCESS_KEY_ID.value(),
+      secretAccessKey: AWS_SECRET_ACCESS_KEY.value(),
+    },
+  });
+
+  const params = {
+    FromEmailAddress: fromName
+      ? `${fromName} <${fromEmail}>`
+      : fromEmail,
+    Destination: {
+      ToAddresses: recipients.map((r) => r.email),
+    },
+    Content: {
+      Simple: {
+        Subject: { Data: subject },
+        Body: {
+          Text: { Data: text },
+          Html: { Data: html },
+        },
+      },
+    },
+  };
+  if (replyTo) {
+    params.ReplyToAddresses = [replyTo];
+  }
+
+  try {
+    await client.send(new SendEmailCommand(params));
+    return { ok: true };
+  } catch (e) {
+    const msg = e?.message || "SES email failed";
+    throw new HttpsError("internal", `SES email failed: ${msg}`);
+  }
+}
+
 function renderTemplate(tpl, vars) {
   let s = tpl || "";
   for (const [k, v] of Object.entries(vars || {})) {
     s = s.replaceAll(`{{${k}}}`, String(v ?? ""));
   }
   return s;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function isoDate(ts) {
@@ -276,6 +337,8 @@ exports.syncGymToPublic = onDocumentWritten(
         websiteText: data.websiteText || "",
         location: data.location || "",
         openingHours: data.openingHours || "",
+        accessBlocked: !!data.accessBlocked,
+        accessBlockedMessage: data.accessBlockedMessage || "",
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -520,6 +583,22 @@ exports.createGymAndAdmin = onCall({ region: "us-central1" }, async (request) =>
   const gymRef = db.collection("gyms").doc();
   const gymId = gymRef.id;
 
+  // load default rates for new gyms
+  let defaultRates = { smsRate: 0, emailRate: 0, perUserRate: 0 };
+  try {
+    const ratesSnap = await db.doc("config/rates").get();
+    if (ratesSnap.exists) {
+      const data = ratesSnap.data() || {};
+      defaultRates = {
+        smsRate: Number(data.smsRate) || 0,
+        emailRate: Number(data.emailRate) || 0,
+        perUserRate: Number(data.perUserRate) || 0,
+      };
+    }
+  } catch (e) {
+    logger.warn("createGymAndAdmin: failed to load default rates", e);
+  }
+
   // create admin auth user
   let authUser;
   try {
@@ -541,6 +620,11 @@ exports.createGymAndAdmin = onCall({ region: "us-central1" }, async (request) =>
     name: gymName,
     slug,
     currency: "KES",
+    smsRate: defaultRates.smsRate,
+    emailRate: defaultRates.emailRate,
+    perUserRate: defaultRates.perUserRate,
+    accessBlocked: false,
+    accessBlockedMessage: "",
     smsTemplates: {
       expiring7:
         "Hi {{name}}, your membership expires on {{date}}. Renew to stay active.",
@@ -1757,6 +1841,199 @@ exports.sendBroadcastSms = onCall(
   }
 );
 
+exports.sendBroadcastEmail = onCall(
+  {
+    region: "us-central1",
+    secrets: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION],
+  },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+    const { gymId } = await resolveCallerGym(caller, request.data);
+    const gymSnap = await db.doc(`gyms/${gymId}`).get();
+    if (!gymSnap.exists)
+      throw new HttpsError("failed-precondition", "Gym not found");
+    const gym = gymSnap.data() || {};
+
+    const audience = String(request.data?.audience || "activeSubscriptions");
+    const subject = String(request.data?.subject || "").trim();
+    const message = String(request.data?.message || "").trim();
+    const selectedUserIds = Array.isArray(request.data?.selectedUserIds)
+      ? request.data.selectedUserIds.map((x) => String(x))
+      : [];
+
+    if (!subject) throw new HttpsError("invalid-argument", "subject required");
+    if (!message) throw new HttpsError("invalid-argument", "message required");
+    if (subject.length > 200)
+      throw new HttpsError("invalid-argument", "subject too long");
+    if (message.length > 10000)
+      throw new HttpsError("invalid-argument", "message too long");
+
+    const membersSnap = await db
+      .collection("users")
+      .where("gymId", "==", gymId)
+      .where("role", "==", "MEMBER")
+      .get();
+    const members = membersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    let allowedIds = null;
+    if (audience === "custom") {
+      if (!selectedUserIds.length)
+        throw new HttpsError("invalid-argument", "No members selected");
+      allowedIds = new Set(selectedUserIds);
+    } else if (audience === "activeSubscriptions") {
+      const now = new Date();
+      const subsSnap = await db
+        .collection("subscriptions")
+        .where("gymId", "==", gymId)
+        .where("status", "==", "active")
+        .get();
+      allowedIds = new Set();
+      for (const sDoc of subsSnap.docs) {
+        const s = sDoc.data();
+        const start = s.startDate?.toDate ? s.startDate.toDate() : null;
+        const end = s.endDate?.toDate ? s.endDate.toDate() : null;
+        if (start && start > now) continue;
+        if (end && end < now) continue;
+        if (s.userId) allowedIds.add(String(s.userId));
+      }
+    } else if (audience === "activeMembers") {
+      allowedIds = new Set(
+        members.filter((m) => (m.status || "active") === "active").map((m) => m.id)
+      );
+    }
+
+    const recipients = members
+      .filter((m) => {
+        if (!m.email) return false;
+        if (allowedIds && !allowedIds.has(m.id)) return false;
+        return true;
+      })
+      .map((m) => ({
+        userId: m.id,
+        email: String(m.email).trim().toLowerCase(),
+        name: m.name || "",
+      }));
+
+    if (!recipients.length)
+      throw new HttpsError("failed-precondition", "No recipients found");
+
+    const broadcastRef = db.collection("emailBroadcasts").doc();
+    const broadcastId = broadcastRef.id;
+    await broadcastRef.set({
+      gymId,
+      createdBy: request.auth.uid,
+      subject,
+      message,
+      audience,
+      totalRecipients: recipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      status: "sending",
+      provider: "ses",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    const fromEmail = "noreply@onlinegym.co";
+    const fromName = gym.name || "Gym";
+    const replyTo = gym.email || null;
+    const text = message;
+    const html = escapeHtml(message).replace(/\n/g, "<br/>");
+
+    const BATCH_SIZE = 50;
+    const LOG_BATCH_SIZE = 400;
+    let sentCount = 0;
+    let failedCount = 0;
+    let logBuffer = [];
+
+    async function flushLogs() {
+      if (!logBuffer.length) return;
+      let batch = db.batch();
+      let count = 0;
+      for (const { ref, data } of logBuffer) {
+        batch.set(ref, data);
+        count += 1;
+        if (count >= LOG_BATCH_SIZE) {
+          await batch.commit();
+          batch = db.batch();
+          count = 0;
+        }
+      }
+      if (count) await batch.commit();
+      logBuffer = [];
+    }
+
+    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      const chunk = recipients.slice(i, i + BATCH_SIZE);
+      let error = null;
+
+      try {
+        await sendSesBatch({
+          recipients: chunk,
+          subject,
+          text,
+          html,
+          fromEmail,
+          fromName,
+          replyTo,
+        });
+      } catch (e) {
+        error = e;
+      }
+
+      for (const r of chunk) {
+        const success = !error;
+        if (success) sentCount += 1;
+        else failedCount += 1;
+
+        logBuffer.push({
+          ref: db.doc(`emailLogs/${broadcastId}_${r.userId}`),
+          data: {
+            gymId,
+            broadcastId,
+            userId: r.userId,
+            to: r.email,
+            subject,
+            message,
+            provider: "ses",
+            status: success ? "queued" : "failed",
+            error: error?.message || null,
+            sentAt: FieldValue.serverTimestamp(),
+          },
+        });
+      }
+
+      if (logBuffer.length >= LOG_BATCH_SIZE) {
+        await flushLogs();
+      }
+    }
+
+    await flushLogs();
+
+    await broadcastRef.set(
+      {
+        sentCount,
+        failedCount,
+        status: "sent",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return {
+      ok: true,
+      broadcastId,
+      totalRecipients: recipients.length,
+      sentCount,
+      failedCount,
+    };
+  }
+);
+
 exports.deleteSmsLog = onCall({ region: "us-central1" }, async (request) => {
   if (!request.auth)
     throw new HttpsError("unauthenticated", "Sign in required");
@@ -1788,6 +2065,42 @@ exports.deleteSmsLog = onCall({ region: "us-central1" }, async (request) => {
       .get();
     if (othersSnap.empty) {
       await db.doc(`smsBroadcasts/${broadcastId}`).delete().catch(() => {});
+    }
+  }
+  return { ok: true };
+});
+
+exports.deleteEmailLog = onCall({ region: "us-central1" }, async (request) => {
+  if (!request.auth)
+    throw new HttpsError("unauthenticated", "Sign in required");
+
+  const caller = await getUserDoc(request.auth.uid);
+  requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+  const { gymId } = await resolveCallerGym(caller, request.data);
+
+  const logId = String(request.data?.logId || "").trim();
+  if (!logId) throw new HttpsError("invalid-argument", "logId required");
+
+  const logRef = db.doc(`emailLogs/${logId}`);
+  const logSnap = await logRef.get();
+  if (!logSnap.exists) throw new HttpsError("not-found", "Log not found");
+
+  const data = logSnap.data() || {};
+  if (data.gymId !== gymId)
+    throw new HttpsError("permission-denied", "Not allowed");
+
+  await logRef.delete();
+
+  const broadcastId = String(data.broadcastId || "").trim();
+  if (broadcastId) {
+    const othersSnap = await db
+      .collection("emailLogs")
+      .where("broadcastId", "==", broadcastId)
+      .where("gymId", "==", gymId)
+      .limit(1)
+      .get();
+    if (othersSnap.empty) {
+      await db.doc(`emailBroadcasts/${broadcastId}`).delete().catch(() => {});
     }
   }
   return { ok: true };

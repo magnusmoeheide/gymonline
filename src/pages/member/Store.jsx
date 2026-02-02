@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import PageInfo from "../../components/PageInfo";
 
 export default function Store() {
   const { user, userDoc } = useAuth();
@@ -59,6 +60,9 @@ export default function Store() {
   return (
     <div>
       <h2>Store</h2>
+      <PageInfo>
+        Browse gym products and place orders.
+      </PageInfo>
 
       {products.map((p) => (
         <div

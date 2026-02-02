@@ -8,6 +8,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPhoneNumber,
   sendPasswordResetEmail,
+  signOut,
 } from "firebase/auth";
 import { auth, authPersistenceReady } from "../../firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -53,6 +54,10 @@ export default function Login({ embedded = false }) {
   const websiteText = gymPublic?.websiteText || "";
   const location = gymPublic?.location || "";
   const openingHours = gymPublic?.openingHours || "";
+  const accessBlocked = !!gymPublic?.accessBlocked;
+  const accessBlockedMessage =
+    String(gymPublic?.accessBlockedMessage || "").trim() ||
+    "Access has been blocked. Please contact us.";
 
   const mountedRef = useRef(false);
   const recaptchaRef = useRef(null);
@@ -121,6 +126,8 @@ export default function Login({ embedded = false }) {
               id: d.id,
               name: data?.name || data?.gymName || d.id,
               slug: data?.slug || data?.subdomain || "",
+              accessBlocked: !!data?.accessBlocked,
+              accessBlockedMessage: data?.accessBlockedMessage || "",
             };
           })
           .filter((x) => x.slug)
@@ -316,6 +323,24 @@ export default function Login({ embedded = false }) {
     const role = docData?.role || "";
     const docSlug = docData?.gymSlug || "";
     const base = slug ? `/${slug}` : docSlug ? `/${docSlug}` : "";
+    const gymId = docData?.gymId || null;
+
+    if (role !== "SUPER_ADMIN" && gymId) {
+      try {
+        const gymSnap = await getDoc(doc(dbRef, "gyms", gymId));
+        const gym = gymSnap?.exists?.() ? gymSnap.data() : null;
+        if (gym?.accessBlocked) {
+          await signOut(auth);
+          setErr(
+            String(gym.accessBlockedMessage || "").trim() ||
+              "Access has been blocked. Please contact us."
+          );
+          return;
+        }
+      } catch (e) {
+        console.warn("[Login] gym access check failed", e);
+      }
+    }
 
     if (role === "SUPER_ADMIN") {
       nav("/superadmin");
@@ -333,6 +358,10 @@ export default function Login({ embedded = false }) {
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+    if (accessBlocked) {
+      setErr(accessBlockedMessage);
+      return;
+    }
 
     if (!usePhone && resetMode) {
       const em = String(email || "").trim();
@@ -446,6 +475,13 @@ export default function Login({ embedded = false }) {
   function enterSelectedGym() {
     const gym = gyms.find((g) => g.id === selectedGymId);
     console.log("[Login] enterSelectedGym", { selectedGymId, gym });
+    if (gym?.accessBlocked) {
+      setErr(
+        String(gym.accessBlockedMessage || "").trim() ||
+          "Access has been blocked. Please contact us."
+      );
+      return;
+    }
     if (!gym?.slug) return;
     window.location.assign(`/${gym.slug}/login`);
   }

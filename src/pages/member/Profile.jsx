@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { useAuth } from "../../context/AuthContext";
 import { functions } from "../../firebase/functionsClient";
+import PageInfo from "../../components/PageInfo";
 
 export default function Profile() {
   const { user, userDoc } = useAuth();
@@ -51,6 +52,9 @@ export default function Profile() {
   return (
     <div>
       <h2>Profile</h2>
+      <PageInfo>
+        View and update your personal details.
+      </PageInfo>
       <div style={{ display: "grid", gap: 4, marginBottom: 14 }}>
         <div>
           Email: <b>{email || "-"}</b>

@@ -12,6 +12,10 @@ import { httpsCallable } from "firebase/functions";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { functions } from "../../firebase/functionsClient";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const normalizeEmail = (v) =>
   String(v || "")
@@ -29,13 +33,36 @@ function toDate(ts) {
 function fmtDate(ts) {
   if (!ts) return "-";
   const d = ts.toDate ? ts.toDate() : new Date(ts);
-  return Number.isNaN(d.getTime()) ? "-" : d.toISOString().slice(0, 10);
+  return Number.isNaN(d.getTime())
+    ? "-"
+    : d.toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
 }
 
 function norm(s) {
   return String(s || "")
     .trim()
     .toLowerCase();
+}
+
+function statusPill(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "active") return { text: "Active", color: "#166534", bg: "#dcfce7" };
+  if (v === "inactive") return { text: "Inactive", color: "#991b1b", bg: "#fee2e2" };
+  return { text: value || "-", color: "#374151", bg: "#e5e7eb" };
+}
+
+function paymentPill(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "paid") return { text: "Paid", color: "#166534", bg: "#dcfce7" };
+  if (v === "comped")
+    return { text: "Comped", color: "#0f766e", bg: "#ccfbf1" };
+  if (v === "awaiting_payment")
+    return { text: "Awaiting payment", color: "#9a3412", bg: "#ffedd5" };
+  return { text: value || "-", color: "#374151", bg: "#e5e7eb" };
 }
 
 export default function Members() {
@@ -48,6 +75,7 @@ export default function Members() {
   const [memberQuery, setMemberQuery] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
+  const [showLookup, setShowLookup] = useState(false);
 
   // create
   const [showAdd, setShowAdd] = useState(false);
@@ -148,7 +176,7 @@ export default function Members() {
     return { text: "Paid", bg: "#dcfce7", color: "#166534" };
   }, [selectedMember, activeSub]);
 
-  const memberSubStatus = useMemo(() => {
+  const activeSubByUserId = useMemo(() => {
     const now = new Date();
     const map = new Map();
     for (const s of subs) {
@@ -160,17 +188,31 @@ export default function Members() {
         s.status === "active" &&
         (!start || start <= now) &&
         (!end || end >= now);
-      const prev = map.get(uid) || { hasAny: false, isActive: false };
-      map.set(uid, {
-        hasAny: true,
-        isActive: prev.isActive || isActive,
-      });
+      if (!isActive) continue;
+      const prev = map.get(uid) || null;
+      if (!prev) {
+        map.set(uid, s);
+        continue;
+      }
+      const prevEnd = prev.endDate?.toDate ? prev.endDate.toDate() : new Date(0);
+      const nextEnd = end || new Date(0);
+      if (nextEnd > prevEnd) map.set(uid, s);
     }
     return map;
   }, [subs]);
 
-  async function load() {
+  async function load({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminMembers:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached) {
+        setMembers(cached.members || []);
+        setSubs(cached.subs || []);
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const membersQ = query(
@@ -183,8 +225,11 @@ export default function Members() {
         getDocs(membersQ),
         getDocs(subsQ),
       ]);
-      setMembers(mSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setSubs(sSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const nextMembers = mSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const nextSubs = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setMembers(nextMembers);
+      setSubs(nextSubs);
+      setCache(cacheKey, { members: nextMembers, subs: nextSubs });
     } finally {
       setBusy(false);
     }
@@ -243,7 +288,7 @@ export default function Members() {
       setCountryCode("+254");
       setCountryCodeCustom("");
       setShowAdd(false);
-      await load();
+      await load({ force: true });
     } catch (err) {
       console.error(err);
       alert(err?.message || "Failed to create member");
@@ -301,7 +346,7 @@ export default function Members() {
         updatedAt: new Date(),
       });
 
-      await load();
+      await load({ force: true });
       cancelEdit();
     } catch (err) {
       console.error(err);
@@ -319,174 +364,217 @@ export default function Members() {
           Add member
         </button>
       </div>
+      <PageInfo>
+        Manage your member list, update profiles, and view subscription details.
+      </PageInfo>
 
-      <div>
-        <h3>Member lookup</h3>
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center", maxWidth: 620 }}>
-          <div style={{ position: "relative", flex: 1 }}>
-            <input
-              placeholder="Search member name / phone / email…"
-              value={memberQuery}
-              onChange={(e) => {
-                setMemberQuery(e.target.value);
-                setShowMemberDropdown(true);
-              }}
-              onFocus={() => setShowMemberDropdown(true)}
-              onBlur={() => setTimeout(() => setShowMemberDropdown(false), 120)}
-            />
-
-            {showMemberDropdown && memberMatches.length ? (
-              <div
-                style={{
-                  position: "absolute",
-                  zIndex: 10,
-                  left: 0,
-                  right: 0,
-                  marginTop: 6,
-                  background: "#fff",
-                  border: "1px solid #eee",
-                  borderRadius: 10,
-                  boxShadow: "0 12px 30px rgba(0,0,0,.08)",
-                  overflow: "hidden",
-                }}
-              >
-                {memberMatches.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setSelectedMemberId(m.id);
-                      setMemberQuery(m.name || "");
-                      setShowMemberDropdown(false);
-                    }}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ fontWeight: 650 }}>{m.name || "Unnamed"}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>
-                      {m.phoneE164 || "—"} {m.email ? `• ${m.email}` : ""}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setMemberQuery("");
-              setSelectedMemberId("");
-              setShowMemberDropdown(false);
+      <div style={{ display: "flex", gap: 8, alignItems: "center", maxWidth: 620 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          <input
+            placeholder="Search member name / phone / email…"
+            value={memberQuery}
+            onChange={(e) => {
+              setMemberQuery(e.target.value);
+              setShowMemberDropdown(true);
             }}
-            disabled={busy}
-          >
-            Clear
-          </button>
-        </div>
+            onFocus={() => setShowMemberDropdown(true)}
+            onBlur={() => setTimeout(() => setShowMemberDropdown(false), 120)}
+          />
 
-        {selectedMember ? (
-          <div style={{ marginTop: 14, maxWidth: 720, display: "grid", gap: 12 }}>
+          {showMemberDropdown && memberMatches.length ? (
             <div
               style={{
-                padding: 12,
-                border: memberStatusBorder,
-                borderRadius: 12,
+                position: "absolute",
+                zIndex: 10,
+                left: 0,
+                right: 0,
+                marginTop: 6,
                 background: "#fff",
+                border: "1px solid #eee",
+                borderRadius: 10,
+                boxShadow: "0 12px 30px rgba(0,0,0,.08)",
+                overflow: "hidden",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {selectedMember.name || "Member"} •{" "}
-                  {selectedMember.phoneE164 || "—"}
-                </div>
-                {memberStatusBadge ? (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      background: memberStatusBadge.bg,
-                      color: memberStatusBadge.color,
-                    }}
-                  >
-                    {memberStatusBadge.text}
-                  </span>
-                ) : null}
-              </div>
-
-              {activeSub ? (
-                <div style={{ marginBottom: 4 }}>
-                  Active subscription — {activeSub.planName || activeSub.planId}{" "}
-                  until {fmtDate(activeSub.endDate)}
-                </div>
-              ) : (
-                <div style={{ opacity: 0.75 }}>No active subscription</div>
-              )}
+              {memberMatches.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setSelectedMemberId(m.id);
+                    setMemberQuery(m.name || "");
+                    setShowMemberDropdown(false);
+                    setShowLookup(true);
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ fontWeight: 650 }}>{m.name || "Unnamed"}</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {m.phoneE164 || "—"} {m.email ? `• ${m.email}` : ""}
+                  </div>
+                </button>
+              ))}
             </div>
-
-            <div className="card" style={{ padding: 12, background: "#f7f7f7" }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>
-                Subscription history
-              </div>
-
-              {!selectedSubs.length ? (
-                <div style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No subscriptions found."}
-                </div>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {selectedSubs.map((s) => (
-                    <div
-                      key={s.id}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1.2fr 1fr 1fr 1fr",
-                        gap: 8,
-                        padding: 10,
-                        borderRadius: 10,
-                        border: "1px solid #f1f1f1",
-                        background: "#fafafa",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>Plan</div>
-                        <div style={{ fontWeight: 600 }}>
-                          {s.planName || s.planId}
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
-                        <div>{s.status}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>Start</div>
-                        <div>{fmtDate(s.startDate)}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>End</div>
-                        <div>{fmtDate(s.endDate)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div style={{ marginTop: 10, opacity: 0.7 }}>
-            Search a member to see subscription details.
-          </div>
-        )}
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setMemberQuery("");
+            setSelectedMemberId("");
+            setShowMemberDropdown(false);
+          }}
+          disabled={busy}
+        >
+          Clear
+        </button>
       </div>
+
+      {showLookup ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowLookup(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: 860,
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>Member lookup</div>
+              <button type="button" onClick={() => setShowLookup(false)}>
+                Close
+              </button>
+            </div>
+
+            {selectedMember ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div
+                  style={{
+                    padding: 12,
+                    border: memberStatusBorder,
+                    borderRadius: 12,
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                    <div style={{ fontWeight: 700 }}>
+                      {selectedMember.name || "Member"} •{" "}
+                      {selectedMember.phoneE164 || "—"}
+                    </div>
+                    {memberStatusBadge ? (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          background: memberStatusBadge.bg,
+                          color: memberStatusBadge.color,
+                        }}
+                      >
+                        {memberStatusBadge.text}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {activeSub ? (
+                    <div style={{ marginBottom: 4 }}>
+                      Active subscription — {activeSub.planName || activeSub.planId}{" "}
+                      until {fmtDate(activeSub.endDate)}
+                    </div>
+                  ) : (
+                    <div style={{ opacity: 0.75 }}>No active subscription</div>
+                  )}
+                </div>
+
+                <div className="card" style={{ padding: 12, background: "#f7f7f7" }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                    Subscription history
+                  </div>
+
+                  {!selectedSubs.length ? (
+                    <div style={{ opacity: 0.7 }}>
+                      {busy ? "Loading…" : "No subscriptions found."}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {selectedSubs.map((s) => (
+                        <div
+                          key={s.id}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1.2fr 1fr 1fr 1fr",
+                            gap: 8,
+                            padding: 10,
+                            borderRadius: 10,
+                            border: "1px solid #f1f1f1",
+                            background: "#fafafa",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>Plan</div>
+                            <div style={{ fontWeight: 600 }}>
+                              {s.planName || s.planId}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
+                            <div>{s.status}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>Start</div>
+                            <div>{fmtDate(s.startDate)}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>End</div>
+                            <div>{fmtDate(s.endDate)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ opacity: 0.7 }}>
+                Search a member to see subscription details.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div className="table-scroll">
         <table
@@ -529,14 +617,59 @@ export default function Members() {
                   {m.email}
                 </td>
                 <td>
-                  {m.status || "active"}
+                  {(() => {
+                    const pill = statusPill(m.status || "active");
+                    return (
+                      <span
+                        style={{
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: pill.color,
+                          background: pill.bg,
+                        }}
+                      >
+                        {pill.text}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td>
                   {(() => {
-                    const s = memberSubStatus.get(m.id);
-                      if (!s) return "—";
-                      return s.isActive ? "Active" : "Expired";
-                    })()}
+                    const s = activeSubByUserId.get(m.id);
+                    if (!s) {
+                      return (
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "#991b1b",
+                            background: "#fee2e2",
+                          }}
+                        >
+                          No active subscription
+                        </span>
+                      );
+                    }
+                    const pill = paymentPill(s.paymentStatus || "awaiting_payment");
+                    return (
+                      <span
+                        style={{
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: pill.color,
+                          background: pill.bg,
+                        }}
+                      >
+                        {pill.text}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td>
                   {m.comments || "—"}

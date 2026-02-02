@@ -1,11 +1,15 @@
 // src/pages/superadmin/Gyms.jsx
 import { useEffect, useState, useCallback } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where, updateDoc, doc } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase/functionsClient";
+import PageInfo from "../../components/PageInfo";
+
+const DEFAULT_BLOCK_MESSAGE =
+  "Access has been blocked. Please contact us.";
 
 export default function Gyms() {
   const { realUserDoc, startSimulation, stopSimulation, isSimulated } =
@@ -19,6 +23,7 @@ export default function Gyms() {
 
   const [gymName, setGymName] = useState("");
   const [gymSlug, setGymSlug] = useState("");
+  const [gymSlugDirty, setGymSlugDirty] = useState(false);
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminCountryCode, setAdminCountryCode] = useState("+254");
@@ -40,6 +45,9 @@ export default function Gyms() {
   const [editGymId, setEditGymId] = useState("");
   const [editGymName, setEditGymName] = useState("");
   const [editGymSlug, setEditGymSlug] = useState("");
+  const [editGymBlocked, setEditGymBlocked] = useState(false);
+  const [editGymBlockedMessage, setEditGymBlockedMessage] = useState("");
+
 
   const fetchData = useCallback(async () => {
     if (realUserDoc?.role !== "SUPER_ADMIN") return;
@@ -111,10 +119,7 @@ export default function Gyms() {
       if (!adminEmail.trim()) return alert("Admin email required");
       const phoneDigits = String(adminPhoneLocal || "").replace(/\D/g, "");
       const phoneOk =
-        !phoneDigits ||
-        (adminCountryCode === "+254"
-          ? phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0])
-          : phoneDigits.length >= 6);
+        phoneDigits.length === 9 && ["7", "1"].includes(phoneDigits[0]);
       if (!phoneDigits) return alert("Admin phone required");
       if (!phoneOk)
         return alert(
@@ -137,6 +142,7 @@ export default function Gyms() {
 
         setGymName("");
         setGymSlug("");
+        setGymSlugDirty(false);
         setAdminName("");
         setAdminEmail("");
         setAdminPhoneLocal("");
@@ -161,6 +167,15 @@ export default function Gyms() {
       fetchData,
     ]
   );
+
+  useEffect(() => {
+    if (gymSlugDirty) return;
+    const next = String(gymName || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[^a-z0-9-]/g, "");
+    setGymSlug(next);
+  }, [gymName, gymSlugDirty]);
 
   const startAssign = useCallback((gymId) => {
     setAssignGymId(gymId);
@@ -298,6 +313,10 @@ export default function Gyms() {
     setEditGymId(gym.id);
     setEditGymName(gym.name || "");
     setEditGymSlug(gym.slug || "");
+    setEditGymBlocked(!!gym.accessBlocked);
+    setEditGymBlockedMessage(
+      String(gym.accessBlockedMessage || DEFAULT_BLOCK_MESSAGE)
+    );
     setShowEditGym(true);
   }, []);
 
@@ -306,6 +325,8 @@ export default function Gyms() {
     setEditGymId("");
     setEditGymName("");
     setEditGymSlug("");
+    setEditGymBlocked(false);
+    setEditGymBlockedMessage("");
   }, []);
 
   const saveEditGym = useCallback(
@@ -322,10 +343,25 @@ export default function Gyms() {
           name: editGymName.trim(),
           slug: editGymSlug.trim(),
         });
+        await updateDoc(doc(db, "gyms", editGymId), {
+          accessBlocked: !!editGymBlocked,
+          accessBlockedMessage: editGymBlocked
+            ? String(editGymBlockedMessage || DEFAULT_BLOCK_MESSAGE).trim()
+            : "",
+          updatedAt: new Date(),
+        });
         setGyms((prev) =>
           prev.map((g) =>
             g.id === editGymId
-              ? { ...g, name: editGymName.trim(), slug: editGymSlug.trim() }
+              ? {
+                  ...g,
+                  name: editGymName.trim(),
+                  slug: editGymSlug.trim(),
+                  accessBlocked: !!editGymBlocked,
+                  accessBlockedMessage: editGymBlocked
+                    ? String(editGymBlockedMessage || DEFAULT_BLOCK_MESSAGE).trim()
+                    : "",
+                }
               : g
           )
         );
@@ -337,8 +373,16 @@ export default function Gyms() {
         setSaving(false);
       }
     },
-    [editGymId, editGymName, editGymSlug, cancelEditGym]
+    [
+      editGymId,
+      editGymName,
+      editGymSlug,
+      editGymBlocked,
+      editGymBlockedMessage,
+      cancelEditGym,
+    ]
   );
+
 
   if (realUserDoc?.role !== "SUPER_ADMIN") {
     return (
@@ -407,6 +451,9 @@ export default function Gyms() {
           </button>
         ) : null}
       </div>
+      <PageInfo>
+        Create gyms, manage admins, and control gym access.
+      </PageInfo>
 
       {gyms.length === 0 ? (
         <p>No gyms found.</p>
@@ -424,13 +471,20 @@ export default function Gyms() {
             <tbody>
               {gyms.map((gym) => (
                 <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "8px" }}>{gym.name}</td>
+                  <td style={{ padding: "8px" }}>
+                    <div>{gym.name}</div>
+                    {gym.accessBlocked ? (
+                      <div style={{ fontSize: 12, color: "#991b1b" }}>
+                        Login disabled
+                      </div>
+                    ) : null}
+                  </td>
                   <td style={{ padding: "8px" }}>{gym.slug}</td>
                   <td style={{ padding: "8px" }}>
                     {gym.admins?.length ? (
                       <div style={{ display: "grid", gap: 4 }}>
                         {gym.admins.map((a) => (
-                          <div key={a.id} style={{ fontWeight: 600 }}>
+                          <div key={a.id}>
                             {a.name || a.email}
                           </div>
                         ))}
@@ -525,54 +579,81 @@ export default function Gyms() {
                 gap: 10,
               }}
             >
-              <input
-                placeholder="Gym name"
-                value={gymName}
-                onChange={(e) => setGymName(e.target.value)}
-              />
-              <input
-                placeholder="Gym slug (e.g. powergym)"
-                value={gymSlug}
-                onChange={(e) => setGymSlug(e.target.value)}
-              />
-              <input
-                placeholder="Admin full name"
-                value={adminName}
-                onChange={(e) => setAdminName(e.target.value)}
-              />
-              <input
-                placeholder="Admin email"
-                value={adminEmail}
-                onChange={(e) => setAdminEmail(e.target.value)}
-                name="superadmin-create-email"
-                autoComplete="off"
-              />
-              <select
-                value={adminCountryCode}
-                onChange={(e) => setAdminCountryCode(e.target.value)}
-              >
-                <option value="+254">Kenya (+254)</option>
-                <option value="+255">Tanzania (+255)</option>
-                <option value="+256">Uganda (+256)</option>
-                <option value="+250">Rwanda (+250)</option>
-                <option value="+257">Burundi (+257)</option>
-                <option value="+251">Ethiopia (+251)</option>
-              </select>
-              <input
-                placeholder="Admin phone (e.g. 712345678)"
-                value={adminPhoneLocal}
-                onChange={(e) => setAdminPhoneLocal(e.target.value)}
-              />
-              <input
-                placeholder="Admin temp password (min 6 chars)"
-                type="password"
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-              <button disabled={saving}>
-                {saving ? "Creating…" : "Create gym"}
-              </button>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Gym name</span>
+                <input
+                  placeholder="Gym name"
+                  value={gymName}
+                  onChange={(e) => setGymName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Gym slug</span>
+                <input
+                  placeholder="e.g. powergym"
+                  value={gymSlug}
+                  onChange={(e) => {
+                    setGymSlug(e.target.value);
+                    setGymSlugDirty(true);
+                  }}
+                  onBlur={() => {
+                    setGymSlug((prev) =>
+                      String(prev || "")
+                        .trim()
+                        .toLowerCase()
+                        .replace(/\s+/g, "")
+                        .replace(/[^a-z0-9-]/g, "")
+                    );
+                  }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Admin full name</span>
+                <input
+                  placeholder="Admin full name"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Admin email</span>
+                <input
+                  placeholder="admin@email.com"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  name="superadmin-create-email"
+                  autoComplete="off"
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Country code</span>
+                <input value="+254" disabled />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>Admin phone</span>
+                <input
+                  placeholder="e.g. 712345678"
+                  value={adminPhoneLocal}
+                  onChange={(e) => setAdminPhoneLocal(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Admin temp password
+                </span>
+                <input
+                  placeholder="Min 6 chars"
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <button disabled={saving} style={{ width: "100%" }}>
+                  {saving ? "Creating…" : "Create gym"}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -789,7 +870,6 @@ export default function Gyms() {
                 gap: 10,
                 gridTemplateColumns: "1fr 1fr auto",
                 alignItems: "end",
-                marginBottom: 16,
               }}
             >
               <label style={{ display: "grid", gap: 6 }}>
@@ -806,10 +886,69 @@ export default function Gyms() {
                   onChange={(e) => setEditGymSlug(e.target.value)}
                 />
               </label>
-              <button disabled={saving} type="submit" style={{ height: 48 }}>
-                {saving ? "Saving…" : "Save changes"}
-              </button>
             </form>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                borderTop: "1px solid #eee",
+                paddingTop: 12,
+              }}
+            >
+              <div style={{ fontWeight: 700 }}>Login access</div>
+              <button
+                type="button"
+                onClick={() => setEditGymBlocked((v) => !v)}
+                aria-pressed={editGymBlocked}
+                style={{
+                  display: "inline-flex",
+                  gap: 8,
+                  alignItems: "center",
+                  textAlign: "left",
+                  width: "fit-content",
+                  padding: "4px 6px",
+                  background: "transparent",
+                  border: "1px solid transparent",
+                  borderRadius: 8,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 4,
+                    border: "1px solid #d1d5db",
+                    background: editGymBlocked ? "#0f766e" : "#fff",
+                    boxShadow: editGymBlocked
+                      ? "inset 0 0 0 2px #fff"
+                      : "none",
+                    flex: "0 0 auto",
+                  }}
+                />
+                <span>Disable logins for this gym</span>
+              </button>
+              {editGymBlocked ? (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, opacity: 0.7 }}>
+                    Block message
+                  </span>
+                  <textarea
+                    rows={3}
+                    value={editGymBlockedMessage}
+                    onChange={(e) => setEditGymBlockedMessage(e.target.value)}
+                    placeholder={DEFAULT_BLOCK_MESSAGE}
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <button disabled={saving} type="button" onClick={saveEditGym} style={{ height: 48 }}>
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
 
           </div>
         </div>

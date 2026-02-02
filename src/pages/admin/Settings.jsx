@@ -1,10 +1,22 @@
 // src/pages/admin/Settings.jsx
 import { useEffect, useState } from "react";
 import { httpsCallable } from "firebase/functions";
-import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { functions } from "../../firebase/functionsClient";
 import { useAuth } from "../../context/AuthContext";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function Settings() {
   const { userDoc } = useAuth();
@@ -33,17 +45,28 @@ export default function Settings() {
   const [editAdminEmail, setEditAdminEmail] = useState("");
   const [editAdminStatus, setEditAdminStatus] = useState("active");
 
-  async function loadAdmins() {
+  async function loadAdmins({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminSettingsAdmins:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached?.admins) {
+        setAdmins(cached.admins);
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const qAdmins = query(
         collection(db, "users"),
         where("gymId", "==", gymId),
-        where("role", "==", "GYM_ADMIN")
+        where("role", "==", "GYM_ADMIN"),
       );
       const snap = await getDocs(qAdmins);
-      setAdmins(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const nextAdmins = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setAdmins(nextAdmins);
+      setCache(cacheKey, { admins: nextAdmins });
     } finally {
       setBusy(false);
     }
@@ -59,6 +82,18 @@ export default function Settings() {
     let alive = true;
     (async () => {
       try {
+        const cacheKey = `adminSettingsGym:${gymId}`;
+        const cached = getCache(cacheKey, CACHE_TTL_MS);
+        if (cached?.gym) {
+          const data = cached.gym;
+          const name = String(data?.name || "");
+          const slug = String(data?.slug || "");
+          setGymName(name);
+          setGymSlug(slug);
+          setGymSavedName(name);
+          setGymSavedSlug(slug);
+          return;
+        }
         const snap = await getDoc(doc(db, "gyms", gymId));
         if (!alive) return;
         const data = snap?.exists?.() ? snap.data() : {};
@@ -68,6 +103,7 @@ export default function Settings() {
         setGymSlug(slug);
         setGymSavedName(name);
         setGymSavedSlug(slug);
+        setCache(cacheKey, { gym: data });
       } catch (e) {
         console.error("Failed to load gym details", e);
       }
@@ -103,7 +139,7 @@ export default function Settings() {
       setAdminEmail("");
       setAdminTempPassword("");
 
-      await loadAdmins();
+      await loadAdmins({ force: true });
       alert("Gym admin created");
     } catch (err) {
       console.error(err);
@@ -147,7 +183,7 @@ export default function Settings() {
         status: editAdminStatus,
         updatedAt: new Date(),
       });
-      await loadAdmins();
+      await loadAdmins({ force: true });
       cancelEditAdmin();
     } catch (err) {
       console.error(err);
@@ -174,6 +210,9 @@ export default function Settings() {
       setGymSavedName(gymName.trim());
       setGymSavedSlug(nextSlug);
       setGymSlug(nextSlug);
+      setCache(`adminSettingsGym:${gymId}`, {
+        gym: { name: gymName.trim(), slug: nextSlug },
+      });
       alert("Gym details updated");
     } catch (err) {
       console.error(err);
@@ -186,10 +225,18 @@ export default function Settings() {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Settings</h2>
+      <PageInfo>
+        Manage gym details, admins, and access settings.
+      </PageInfo>
 
       <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        Any questions? Contact us on <b>mail@onlinegym.co</b> or{" "}
-        <b>+254 721 499 429</b>
+        Any questions? Contact us on{" "}
+        <b>
+          <a href="mailto: mail@onlinegym.co">
+            <u>mail@onlinegym.co</u>
+          </a>
+        </b>{" "}
+        or <b>+254 721 499 429</b>
       </div>
 
       <div className="card" style={{ padding: 16, maxWidth: 720 }}>
@@ -198,7 +245,7 @@ export default function Settings() {
           onSubmit={saveGymDetails}
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) auto",
             gap: 10,
           }}
         >
@@ -218,6 +265,18 @@ export default function Settings() {
               onChange={(e) => setGymSlug(e.target.value)}
             />
           </label>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "flex-end",
+              paddingBottom: 2,
+            }}
+          >
+            <button className="btn-primary" disabled={gymBusy} type="submit">
+              {gymBusy ? "Saving…" : "Save gym details"}
+            </button>
+          </div>
           {gymSlug.trim() && gymSlug.trim() !== gymSavedSlug.trim() ? (
             <div
               style={{
@@ -233,18 +292,6 @@ export default function Settings() {
               saved links and bookmarks after saving.
             </div>
           ) : null}
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              justifyContent: "flex-end",
-              gridColumn: "1 / -1",
-            }}
-          >
-            <button className="btn-primary" disabled={gymBusy} type="submit">
-              {gymBusy ? "Saving…" : "Save gym details"}
-            </button>
-          </div>
         </form>
       </div>
 
@@ -258,7 +305,6 @@ export default function Settings() {
           Add gym admin
         </button>
       </div>
-
 
       <div className="table-scroll">
         <table

@@ -10,6 +10,10 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function Orders() {
   const { userDoc } = useAuth();
@@ -37,9 +41,23 @@ export default function Orders() {
     return price * q;
   }, [selectedProduct, qty]);
 
-  async function load() {
+  async function load({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminOrders:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached) {
+        setMembers(cached.members || []);
+        setProducts(cached.products || []);
+        setOrders(cached.orders || []);
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
+    let nextMembers = members;
+    let nextProducts = products;
+    let nextOrders = orders;
     try {
       const membersQ = query(
         collection(db, "users"),
@@ -54,12 +72,16 @@ export default function Orders() {
         getDocs(membersQ),
         getDocs(productsQ),
       ]);
-      setMembers(membersSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setProducts(productsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      nextMembers = membersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      nextProducts = productsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setMembers(nextMembers);
+      setProducts(nextProducts);
     } catch (e) {
       console.error(e);
       setMembers([]);
       setProducts([]);
+      nextMembers = [];
+      nextProducts = [];
     }
 
     try {
@@ -69,12 +91,19 @@ export default function Orders() {
         orderBy("createdAt", "desc")
       );
       const ordersSnap = await getDocs(ordersQ);
-      setOrders(ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      nextOrders = ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setOrders(nextOrders);
     } catch (e) {
       // If you haven't created the index/orderBy yet, Firestore will tell you.
       console.error(e);
       setOrders([]);
+      nextOrders = [];
     } finally {
+      setCache(cacheKey, {
+        members: nextMembers,
+        products: nextProducts,
+        orders: nextOrders,
+      });
       setBusy(false);
     }
   }
@@ -115,7 +144,7 @@ export default function Orders() {
       setQty(1);
       setPaymentStatus("pending");
       setShowAdd(false);
-      await load();
+      await load({ force: true });
     } catch (e) {
       console.error(e);
       alert(e?.message || "Failed to create order");
@@ -132,6 +161,9 @@ export default function Orders() {
           Add order
         </button>
       </div>
+      <PageInfo>
+        Create and review orders for products and services sold to members.
+      </PageInfo>
 
       <div className="table-scroll">
         <table

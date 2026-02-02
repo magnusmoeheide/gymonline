@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import PageInfo from "../../components/PageInfo";
 
 function fmtDate(ts) {
   if (!ts) return "-";
@@ -83,6 +84,9 @@ export default function Membership() {
   return (
     <div style={{ maxWidth: 720 }}>
       <h2>My Membership</h2>
+      <PageInfo>
+        View your current plan, status, and remaining time.
+      </PageInfo>
 
       {busy ? (
         <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 8 }}>

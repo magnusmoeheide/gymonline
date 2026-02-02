@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import PageInfo from "../../components/PageInfo";
 
 export default function Orders() {
   const { user, userDoc } = useAuth();
@@ -32,6 +33,9 @@ export default function Orders() {
   return (
     <div>
       <h2>My Orders</h2>
+      <PageInfo>
+        Review your purchase history and order statuses.
+      </PageInfo>
 
       {orders.map((o) => (
         <div

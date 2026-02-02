@@ -45,7 +45,7 @@ const ADMIN_LINKS = [
 const SUPERADMIN_LINKS = [
   { to: "/superadmin", label: "Gyms", end: true, icon: "fa-solid fa-dumbbell" },
   { to: "/superadmin/balance", label: "Balance", icon: "fa-solid fa-wallet" },
-  { to: "/superadmin/payments", label: "Payments", icon: "fa-solid fa-money-check-dollar" },
+  { to: "/superadmin/rates", label: "Rates", icon: "fa-solid fa-tag" },
   { to: "/superadmin/settings", label: "Settings", icon: "fa-solid fa-gear" },
 ];
 

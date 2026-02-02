@@ -4,6 +4,7 @@ import { collection, getDocs, query, where } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db } from "../../firebase/db";
 import { functions } from "../../firebase/functionsClient";
+import PageInfo from "../../components/PageInfo";
 
 export default function SuperAdminSettings() {
   const [admins, setAdmins] = useState([]);
@@ -92,6 +93,9 @@ export default function SuperAdminSettings() {
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
       <div style={{ display: "grid", gap: 10 }}>
         <h2 style={{ margin: 0 }}>Superadmin Settings</h2>
+        <PageInfo>
+          Manage superadmin accounts and access.
+        </PageInfo>
         <div>
           <button
             type="button"

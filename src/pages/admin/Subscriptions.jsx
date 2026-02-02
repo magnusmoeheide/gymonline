@@ -14,6 +14,10 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function toDateInputValue(d) {
   const yyyy = d.getFullYear();
@@ -25,7 +29,13 @@ function toDateInputValue(d) {
 function fmtDate(ts) {
   if (!ts) return "-";
   const d = ts.toDate ? ts.toDate() : new Date(ts);
-  return Number.isNaN(d.getTime()) ? "-" : d.toISOString().slice(0, 10);
+  return Number.isNaN(d.getTime())
+    ? "-"
+    : d.toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
 }
 
 function toDate(ts) {
@@ -48,10 +58,6 @@ function overlapMs(aStart, aEndExcl, bStart, bEndExcl) {
 function money(n) {
   const x = Number(n) || 0;
   return x.toLocaleString(undefined, { maximumFractionDigits: 0 });
-}
-function fmtYmd(d) {
-  if (!d) return "-";
-  return d.toISOString().slice(0, 10);
 }
 function parseDateInput(dateStr) {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -76,6 +82,26 @@ function norm(s) {
     .toLowerCase();
 }
 
+function statusPill(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "active") return { text: "Active", color: "#166534", bg: "#dcfce7" };
+  if (v === "ended") return { text: "Ended", color: "#7c2d12", bg: "#ffedd5" };
+  if (v === "cancelled")
+    return { text: "Cancelled", color: "#991b1b", bg: "#fee2e2" };
+  if (v === "paused") return { text: "Paused", color: "#1e3a8a", bg: "#dbeafe" };
+  return { text: value || "-", color: "#374151", bg: "#e5e7eb" };
+}
+
+function paymentPill(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "paid") return { text: "Paid", color: "#166534", bg: "#dcfce7" };
+  if (v === "comped")
+    return { text: "Comped", color: "#0f766e", bg: "#ccfbf1" };
+  if (v === "awaiting_payment")
+    return { text: "Awaiting payment", color: "#9a3412", bg: "#ffedd5" };
+  return { text: value || "-", color: "#374151", bg: "#e5e7eb" };
+}
+
 function memberLabel(member) {
   return member?.name || "Unknown member";
 }
@@ -95,10 +121,13 @@ export default function Subscriptions() {
   const [showAssign, setShowAssign] = useState(false);
   const [assignErr, setAssignErr] = useState("");
   const [assignWarn, setAssignWarn] = useState("");
+  const [assignBlocked, setAssignBlocked] = useState(false);
 
   const [userId, setUserId] = useState("");
   const [planId, setPlanId] = useState("");
   const [startDate, setStartDate] = useState(toDateInputValue(new Date()));
+  const [endDate, setEndDate] = useState(toDateInputValue(new Date()));
+  const [endDateDirty, setEndDateDirty] = useState(false);
 
   const [paymentStatus, setPaymentStatus] = useState("awaiting_payment"); // paid | awaiting_payment | comped
   const [comments, setComments] = useState("");
@@ -140,8 +169,25 @@ export default function Subscriptions() {
     } catch {}
   }, [memberQuery, memberFilterUserId]);
 
-  async function load() {
+  async function load({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminSubscriptions:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached) {
+        setMembers(cached.members || []);
+        setPlans(cached.plans || []);
+        setSubs(cached.subs || []);
+        if (
+          memberFilterUserId &&
+          !(cached.members || []).some((m) => m.id === memberFilterUserId)
+        ) {
+          setMemberFilterUserId("");
+        }
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const membersQ = query(
@@ -168,9 +214,12 @@ export default function Subscriptions() {
       ]);
 
       const mRows = mSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const pRows = pSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const sRows = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setMembers(mRows);
-      setPlans(pSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setSubs(sSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setPlans(pRows);
+      setSubs(sRows);
+      setCache(cacheKey, { members: mRows, plans: pRows, subs: sRows });
 
       if (
         memberFilterUserId &&
@@ -228,6 +277,8 @@ export default function Subscriptions() {
     setUserId("");
     setPlanId("");
     setStartDate(toDateInputValue(new Date()));
+    setEndDate(toDateInputValue(new Date()));
+    setEndDateDirty(false);
     setPaymentStatus("awaiting_payment");
     setComments("");
   }
@@ -250,19 +301,38 @@ export default function Subscriptions() {
         return be.getTime() - ae.getTime();
       })[0];
 
-    if (!covering) return;
+    if (!covering) {
+      setAssignBlocked(false);
+      return;
+    }
 
     const until = toDate(covering.endDate);
     setAssignWarn(
-      `Member already has a subscription until ${until ? fmtYmd(until) : "?"}.`
+      `Member already has a subscription until ${
+        until ? fmtDate(until) : "?"
+      }.`
     );
+    setAssignBlocked(true);
   }, [userId, startDate, subs]);
+
+  useEffect(() => {
+    if (endDateDirty) return;
+    const plan = selectedPlan;
+    const startD = parseDateInput(startDate);
+    if (!plan || !startD) return;
+    if (plan.type !== "time_based") return;
+    const days = Number(plan.durationDays) || 30;
+    const nextEnd = new Date(startD);
+    nextEnd.setDate(nextEnd.getDate() + days - 1);
+    setEndDate(toDateInputValue(nextEnd));
+  }, [selectedPlan, startDate, endDateDirty]);
 
   async function assign(e) {
     e.preventDefault();
     if (!gymId) return;
 
     setAssignErr("");
+    if (assignBlocked) return;
 
     if (!userId) return setAssignErr("Pick member");
     if (!planId) return setAssignErr("Pick plan");
@@ -272,6 +342,10 @@ export default function Subscriptions() {
 
     const startD = parseDateInput(startDate);
     if (!startD) return setAssignErr("Invalid start date");
+    const endD = parseDateInput(endDate);
+    if (!endD) return setAssignErr("Invalid end date");
+    if (endD.getTime() < startD.getTime())
+      return setAssignErr("End date cannot be before start date");
 
     const covering = subs
       .filter((s) => s.userId === userId)
@@ -283,7 +357,7 @@ export default function Subscriptions() {
       const until = toDate(covering.endDate);
       return setAssignErr(
         `Member already has a subscription until ${
-          until ? fmtYmd(until) : "?"
+          until ? fmtDate(until) : "?"
         }.`
       );
     }
@@ -294,8 +368,6 @@ export default function Subscriptions() {
     }
 
     const days = Number(plan.durationDays) || 30;
-    const endD = new Date(startD);
-    endD.setDate(endD.getDate() + days - 1); // inclusive
 
     const pay = ["paid", "awaiting_payment", "comped"].includes(paymentStatus)
       ? paymentStatus
@@ -340,7 +412,7 @@ export default function Subscriptions() {
         updatedAt: nowTs,
       });
 
-      await load();
+      await load({ force: true });
       closeAssign();
     } catch (err) {
       console.error(err);
@@ -358,7 +430,7 @@ export default function Subscriptions() {
         status: "ended",
         updatedAt: serverTimestamp(),
       });
-      await load();
+      await load({ force: true });
     } finally {
       setBusy(false);
     }
@@ -416,7 +488,7 @@ export default function Subscriptions() {
         updatedAt: serverTimestamp(),
       });
 
-      await load();
+      await load({ force: true });
       closeEdit();
     } catch (err) {
       console.error(err);
@@ -486,6 +558,9 @@ export default function Subscriptions() {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Subscriptions</h2>
+      <PageInfo>
+        Assign plans, manage active subscriptions, and track member status.
+      </PageInfo>
 
       {/* Assign button */}
       <div
@@ -522,6 +597,8 @@ export default function Subscriptions() {
             style={{
               width: "100%",
               maxWidth: 760,
+              maxHeight: "80vh",
+              overflow: "auto",
               background: "#fff",
               borderRadius: 12,
               border: "1px solid #eee",
@@ -557,12 +634,6 @@ export default function Subscriptions() {
                 </select>
               </label>
 
-              {selectedMember ? (
-                <div style={{ fontSize: 12, opacity: 0.75 }}>
-                  Selected: <b>{selectedMember.name}</b> —{" "}
-                  {selectedMember.phoneE164}
-                </div>
-              ) : null}
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 13, opacity: 0.8 }}>Plan</div>
@@ -585,6 +656,20 @@ export default function Subscriptions() {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 13, opacity: 0.8 }}>End date</div>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setEndDateDirty(true);
+                  }}
+                  onBlur={() => {
+                    setEndDate((prev) => String(prev || "").trim());
+                  }}
                 />
               </label>
 
@@ -615,12 +700,20 @@ export default function Subscriptions() {
                   style={{
                     padding: "8px 10px",
                     borderRadius: 10,
-                    border: "1px solid #fde68a",
-                    background: "#fffbeb",
+                    border: "1px solid #fecaca",
+                    background: "#fef2f2",
+                    color: "#b91c1c",
                     fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                   }}
                 >
-                  {assignWarn}
+                  <i
+                    className="fa-solid fa-triangle-exclamation"
+                    style={{ lineHeight: 1 }}
+                  />
+                  <div>{assignWarn}</div>
                 </div>
               ) : null}
 
@@ -631,7 +724,7 @@ export default function Subscriptions() {
               ) : null}
 
               <div style={{ display: "flex", gap: 10 }}>
-                <button disabled={busy} type="submit">
+                <button disabled={busy || assignBlocked} type="submit">
                   {busy ? "Saving…" : "Confirm assign"}
                 </button>
                 <button disabled={busy} type="button" onClick={closeAssign}>
@@ -670,8 +763,44 @@ export default function Subscriptions() {
                             style={{ borderBottom: "1px solid #f3f3f3" }}
                           >
                             <td>{s.planName || s.planId}</td>
-                            <td>{s.status}</td>
-                            <td>{s.paymentStatus || "-"}</td>
+                            <td>
+                              {(() => {
+                                const pill = statusPill(s.status);
+                                return (
+                                  <span
+                                    style={{
+                                      padding: "2px 8px",
+                                      borderRadius: 999,
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      color: pill.color,
+                                      background: pill.bg,
+                                    }}
+                                  >
+                                    {pill.text}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td>
+                              {(() => {
+                                const pill = paymentPill(s.paymentStatus);
+                                return (
+                                  <span
+                                    style={{
+                                      padding: "2px 8px",
+                                      borderRadius: 999,
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      color: pill.color,
+                                      background: pill.bg,
+                                    }}
+                                  >
+                                    {pill.text}
+                                  </span>
+                                );
+                              })()}
+                            </td>
                             <td>{fmtDate(s.startDate)}</td>
                             <td>{fmtDate(s.endDate)}</td>
                             <td>{money(s.planPrice)}</td>
@@ -722,6 +851,8 @@ export default function Subscriptions() {
             style={{
               width: "100%",
               maxWidth: 720,
+              maxHeight: "80vh",
+              overflow: "auto",
               background: "#fff",
               borderRadius: 12,
               border: "1px solid #eee",
@@ -954,8 +1085,44 @@ export default function Subscriptions() {
                 <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                   <td>{memberLabel(member)}</td>
                   <td>{s.planName || s.planId}</td>
-                  <td>{s.status}</td>
-                  <td>{s.paymentStatus || "awaiting_payment"}</td>
+                  <td>
+                    {(() => {
+                      const pill = statusPill(s.status);
+                      return (
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: pill.color,
+                            background: pill.bg,
+                          }}
+                        >
+                          {pill.text}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td>
+                    {(() => {
+                      const pill = paymentPill(s.paymentStatus || "awaiting_payment");
+                      return (
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: pill.color,
+                            background: pill.bg,
+                          }}
+                        >
+                          {pill.text}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td>{fmtDate(s.startDate)}</td>
                   <td>{fmtDate(s.endDate)}</td>
                   <td

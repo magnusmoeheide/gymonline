@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import PageInfo from "../../components/PageInfo";
 
 export default function Dashboard() {
   const { user, userDoc } = useAuth();
@@ -39,6 +40,9 @@ export default function Dashboard() {
           Welcome, <b>{displayName || user?.email}</b>
         </div>
       </div>
+      <PageInfo>
+        View your active bundles and key membership details at a glance.
+      </PageInfo>
 
       <div className="card" style={{ padding: 16 }}>
         <div

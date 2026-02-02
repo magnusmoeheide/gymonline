@@ -8,6 +8,10 @@ import { functions } from "../../firebase/functionsClient";
 import { storage } from "../../firebase/storage";
 import { useAuth } from "../../context/AuthContext";
 import { auth } from "../../firebase/auth";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function Website() {
   const { userDoc } = useAuth();
@@ -27,6 +31,16 @@ export default function Website() {
     let alive = true;
     (async () => {
       try {
+        const cacheKey = `adminWebsite:${gymId}`;
+        const cached = getCache(cacheKey, CACHE_TTL_MS);
+        if (cached?.gym) {
+          const data = cached.gym;
+          setLoginLogoUrl(data?.loginLogoUrl || "");
+          setWebsiteText(data?.websiteText || "");
+          setLocation(data?.location || "");
+          setOpeningHours(data?.openingHours || "");
+          return;
+        }
         const snap = await getDoc(doc(db, "gyms", gymId));
         if (!alive) return;
         const data = snap?.exists?.() ? snap.data() : {};
@@ -34,6 +48,7 @@ export default function Website() {
         setWebsiteText(data?.websiteText || "");
         setLocation(data?.location || "");
         setOpeningHours(data?.openingHours || "");
+        setCache(cacheKey, { gym: data });
       } catch (e) {
         console.error("Failed to load gym branding", e);
       }
@@ -91,6 +106,14 @@ export default function Website() {
 
       setLoginLogoUrl(nextLogoUrl);
       setLogoFile(null);
+      setCache(`adminWebsite:${gymId}`, {
+        gym: {
+          loginLogoUrl: nextLogoUrl,
+          websiteText: websiteText.trim(),
+          location: location.trim(),
+          openingHours: openingHours.trim(),
+        },
+      });
       alert("Website settings saved");
     } catch (err) {
       console.error(err);
@@ -103,6 +126,9 @@ export default function Website() {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Website</h2>
+      <PageInfo>
+        Update your public website content and login branding.
+      </PageInfo>
 
       <div style={{ fontSize: 13, opacity: 0.75 }}>
         Login link:{" "}

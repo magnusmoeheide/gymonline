@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
 
 function toDate(ts) {
   if (!ts) return null;
@@ -54,6 +56,8 @@ const MONTH_NAMES = [
   "December",
 ];
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 export default function Revenue() {
   const { userDoc } = useAuth();
   const gymId = userDoc?.gymId;
@@ -94,8 +98,18 @@ export default function Revenue() {
     } catch {}
   }, [filterMode, filterYear, filterMonth]);
 
-  async function load() {
+  async function load({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminRevenue:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached) {
+        setSubs(cached.subs || []);
+        setOrders(cached.orders || []);
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const subsQ = query(
@@ -110,8 +124,11 @@ export default function Revenue() {
         getDocs(subsQ),
         getDocs(ordersQ),
       ]);
-      setSubs(subsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setOrders(ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const nextSubs = subsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const nextOrders = ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setSubs(nextSubs);
+      setOrders(nextOrders);
+      setCache(cacheKey, { subs: nextSubs, orders: nextOrders });
     } finally {
       setBusy(false);
     }
@@ -187,6 +204,9 @@ export default function Revenue() {
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <h2>Revenue</h2>
+      <PageInfo>
+        Review revenue totals by month or year across subscriptions and orders.
+      </PageInfo>
 
       <div
         style={{
@@ -224,6 +244,7 @@ export default function Revenue() {
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 13, opacity: 0.8 }}>Mode</span>
             <select
+              style={{ padding: "2px 8px", height: 28 }}
               value={filterMode}
               onChange={(e) => setFilterMode(e.target.value)}
             >
@@ -235,6 +256,7 @@ export default function Revenue() {
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 13, opacity: 0.8 }}>Year</span>
             <select
+              style={{ padding: "2px 8px", height: 28 }}
               value={filterYear}
               onChange={(e) => setFilterYear(Number(e.target.value))}
             >
@@ -247,12 +269,13 @@ export default function Revenue() {
           </label>
 
           {filterMode === "month" ? (
-            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 13, opacity: 0.8 }}>Month</span>
-              <select
-                value={filterMonth}
-                onChange={(e) => setFilterMonth(Number(e.target.value))}
-              >
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>Month</span>
+            <select
+              style={{ padding: "2px 8px", height: 28 }}
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(Number(e.target.value))}
+            >
                 {MONTH_NAMES.map((m, i) => (
                   <option key={m} value={i + 1}>
                     {m}

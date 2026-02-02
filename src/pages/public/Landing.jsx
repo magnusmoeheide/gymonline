@@ -547,7 +547,15 @@ export default function Landing() {
           }}
         >
           <div>© {new Date().getFullYear()} Onlinegym</div>
-          <div>Payments • Subscriptions • Marketing • Members</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <a href="/terms" style={{ color: "inherit" }}>
+              Terms of Service
+            </a>
+            <span aria-hidden="true">•</span>
+            <a href="/privacy" style={{ color: "inherit" }}>
+              Privacy Policy
+            </a>
+          </div>
         </footer>
       </div>
     </div>

@@ -4,6 +4,9 @@ import { collection, query, where, getDocs, getDoc, doc } from "firebase/firesto
 import { db } from "../../firebase/db";
 import { useAuth, SIM_KEY } from "../../context/AuthContext";
 import { useNavigate, useParams } from "react-router-dom";
+import { getCache, setCache } from "../../app/utils/dataCache";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function Overview() {
   const nav = useNavigate();
@@ -15,12 +18,37 @@ export default function Overview() {
 
   const [members, setMembers] = useState([]);
   const [subs, setSubs] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [gym, setGym] = useState(null);
   const [busy, setBusy] = useState(false);
   function toDate(ts) {
     if (!ts) return null;
     const d = ts.toDate ? ts.toDate() : new Date(ts);
     return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function startOfDay(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+  function endOfDayExclusive(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+  }
+  function startOfYear(y) {
+    return new Date(y, 0, 1);
+  }
+  function endOfYearExclusive(y) {
+    return new Date(y + 1, 0, 1);
+  }
+  function startOfMonth(y, m) {
+    return new Date(y, m, 1);
+  }
+  function endOfMonthExclusive(y, m) {
+    return new Date(y, m + 1, 1);
+  }
+  function overlapMs(aStart, aEndExcl, bStart, bEndExcl) {
+    const s = Math.max(aStart.getTime(), bStart.getTime());
+    const e = Math.min(aEndExcl.getTime(), bEndExcl.getTime());
+    return Math.max(0, e - s);
   }
 
   function money(n) {
@@ -37,6 +65,15 @@ export default function Overview() {
     if (!gymId) return;
 
     let cancelled = false;
+    const cacheKey = `adminOverview:${gymId}`;
+    const cached = getCache(cacheKey, CACHE_TTL_MS);
+    if (cached) {
+      setMembers(cached.members || []);
+      setSubs(cached.subs || []);
+      setOrders(cached.orders || []);
+      setGym(cached.gym || null);
+      setBusy(false);
+    }
     setBusy(true);
 
     const membersQ = query(
@@ -48,14 +85,29 @@ export default function Overview() {
       collection(db, "subscriptions"),
       where("gymId", "==", gymId)
     );
+    const ordersQ = query(
+      collection(db, "orders"),
+      where("gymId", "==", gymId)
+    );
     const gymRef = doc(db, "gyms", gymId);
 
-    Promise.all([getDocs(membersQ), getDocs(subsQ), getDoc(gymRef)])
-      .then(([mSnap, sSnap, gSnap]) => {
+    Promise.all([getDocs(membersQ), getDocs(subsQ), getDocs(ordersQ), getDoc(gymRef)])
+      .then(([mSnap, sSnap, oSnap, gSnap]) => {
         if (cancelled) return;
-        setMembers(mSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setSubs(sSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setGym(gSnap?.exists?.() ? { id: gSnap.id, ...gSnap.data() } : null);
+        const nextMembers = mSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const nextSubs = sSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const nextOrders = oSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const nextGym = gSnap?.exists?.() ? { id: gSnap.id, ...gSnap.data() } : null;
+        setMembers(nextMembers);
+        setSubs(nextSubs);
+        setOrders(nextOrders);
+        setGym(nextGym);
+        setCache(cacheKey, {
+          members: nextMembers,
+          subs: nextSubs,
+          orders: nextOrders,
+          gym: nextGym,
+        });
       })
       .finally(() => {
         if (cancelled) return;
@@ -108,23 +160,63 @@ export default function Overview() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
-    let yearTotal = 0;
+    const monthStart = startOfMonth(year, month);
+    const monthEndExcl = endOfMonthExclusive(year, month);
+    const yearStart = startOfYear(year);
+    const yearEndExcl = endOfYearExclusive(year);
+
     let monthTotal = 0;
+    let yearTotal = 0;
 
     for (const s of subs) {
-      if (s.paymentStatus !== "paid") continue;
-      const amount = Number(s.planPrice) || 0;
-      if (!amount) continue;
-      const d = toDate(s.startDate) || toDate(s.createdAt);
-      if (!d) continue;
-      if (d.getFullYear() === year) {
+      const price = Number(s.planPrice) || 0;
+      if (!price) continue;
+
+      const start = toDate(s.startDate);
+      const end = toDate(s.endDate);
+      if (!start || !end) continue;
+
+      const subStart = startOfDay(start);
+      const subEndExcl = endOfDayExclusive(end);
+      const subMs = Math.max(1, subEndExcl.getTime() - subStart.getTime());
+      const subDays = Math.max(1, Math.round(subMs / 86400000));
+
+      const monthOverlap = overlapMs(
+        subStart,
+        subEndExcl,
+        monthStart,
+        monthEndExcl
+      );
+      if (monthOverlap > 0) {
+        monthTotal += (price * (monthOverlap / 86400000)) / subDays;
+      }
+
+      const yearOverlap = overlapMs(
+        subStart,
+        subEndExcl,
+        yearStart,
+        yearEndExcl
+      );
+      if (yearOverlap > 0) {
+        yearTotal += (price * (yearOverlap / 86400000)) / subDays;
+      }
+    }
+
+    for (const o of orders) {
+      const created = toDate(o.createdAt);
+      if (!created) continue;
+      const ts = created.getTime();
+      const amount = Number(o.total) || 0;
+      if (ts >= monthStart.getTime() && ts < monthEndExcl.getTime()) {
+        monthTotal += amount;
+      }
+      if (ts >= yearStart.getTime() && ts < yearEndExcl.getTime()) {
         yearTotal += amount;
-        if (d.getMonth() === month) monthTotal += amount;
       }
     }
 
     return { yearTotal, monthTotal };
-  }, [subs]);
+  }, [subs, orders]);
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
@@ -154,15 +246,19 @@ export default function Overview() {
             </div>
           </div>
           <div className="card" style={{ padding: 14 }}>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this year</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this month</div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
-              {busy ? "—" : money(revenueStats.yearTotal)}
+              {busy
+                ? "—"
+                : `${money(revenueStats.monthTotal)} ${userDoc?.currency || ""}`}
             </div>
           </div>
           <div className="card" style={{ padding: 14 }}>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this month</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this year</div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
-              {busy ? "—" : money(revenueStats.monthTotal)}
+              {busy
+                ? "—"
+                : `${money(revenueStats.yearTotal)} ${userDoc?.currency || ""}`}
             </div>
           </div>
       </div>

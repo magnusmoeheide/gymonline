@@ -4,7 +4,7 @@ import RequireRole from "../guards/RequireRole";
 import Layout from "../../components/Layout";
 import Gyms from "../../pages/superadmin/Gyms";
 import Balance from "../../pages/superadmin/Balance";
-import Payments from "../../pages/superadmin/Payments";
+import Rates from "../../pages/superadmin/Rates";
 import Settings from "../../pages/superadmin/Settings";
 
 export default function SuperAdminRoutes() {
@@ -15,7 +15,7 @@ export default function SuperAdminRoutes() {
           <Routes>
             <Route index element={<Gyms />} />
             <Route path="balance" element={<Balance />} />
-            <Route path="payments" element={<Payments />} />
+            <Route path="rates" element={<Rates />} />
             <Route path="settings" element={<Settings />} />
           </Routes>
         </Layout>

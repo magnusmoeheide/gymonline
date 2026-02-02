@@ -13,6 +13,10 @@ import {
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { orderBy } from "firebase/firestore";
+import { getCache, setCache } from "../../app/utils/dataCache";
+import PageInfo from "../../components/PageInfo";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function Plans() {
   const { userDoc } = useAuth();
@@ -28,8 +32,17 @@ export default function Plans() {
   const [durationDays, setDurationDays] = useState("30");
   const [sessionsTotal, setSessionsTotal] = useState("10");
 
-  async function load() {
+  async function load({ force = false } = {}) {
     if (!gymId) return;
+    const cacheKey = `adminPlans:${gymId}`;
+    if (!force) {
+      const cached = getCache(cacheKey, CACHE_TTL_MS);
+      if (cached) {
+        setPlans(cached.plans || []);
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const q = query(collection(db, "plans"), where("gymId", "==", gymId));
@@ -43,6 +56,7 @@ export default function Plans() {
       });
 
       setPlans(rows);
+      setCache(cacheKey, { plans: rows });
     } finally {
       setBusy(false);
     }
@@ -81,7 +95,7 @@ export default function Plans() {
       setName("");
       setPrice("");
       setShowAdd(false);
-      await load();
+      await load({ force: true });
     } catch (e2) {
       console.error(e2);
       alert("Failed to create plan (check rules)");
@@ -97,7 +111,7 @@ export default function Plans() {
         isActive: !plan.isActive,
         updatedAt: serverTimestamp(),
       });
-      await load();
+      await load({ force: true });
     } finally {
       setBusy(false);
     }
@@ -108,7 +122,7 @@ export default function Plans() {
     setBusy(true);
     try {
       await deleteDoc(doc(db, "plans", plan.id));
-      await load();
+      await load({ force: true });
     } finally {
       setBusy(false);
     }
@@ -121,6 +135,13 @@ export default function Plans() {
         <button type="button" onClick={() => setShowAdd(true)} disabled={busy}>
           Create plan
         </button>
+      </div>
+      <PageInfo>
+        Create the subscription plans your members can subscribe to.
+      </PageInfo>
+      <div style={{ padding: 12, maxWidth: 820, opacity: 0.8 }}>
+        Here you create the subscription plans that your gym members can
+        subscribe to.
       </div>
 
       <div className="table-scroll">

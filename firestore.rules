@@ -112,6 +112,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Global config (superadmin only)
+    match /config/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
     match /products/{id} {
       allow read: if isSignedIn() && sameGymExisting();
       allow create, update, delete: if isGymAdmin() && sameGym(request.resource.data);

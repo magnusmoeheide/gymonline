@@ -5,6 +5,7 @@ import { httpsCallable } from "firebase/functions";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { functions } from "../../firebase/functionsClient";
+import PageInfo from "../../components/PageInfo";
 
 export default function Balance() {
   const { realUserDoc } = useAuth();
@@ -13,6 +14,10 @@ export default function Balance() {
   const [error, setError] = useState("");
   const [balanceEdits, setBalanceEdits] = useState({});
   const [saving, setSaving] = useState({});
+  const [showTxns, setShowTxns] = useState(false);
+  const [txnsGym, setTxnsGym] = useState(null);
+  const [txns, setTxns] = useState([]);
+  const [txnsBusy, setTxnsBusy] = useState(false);
 
   const fetchGyms = useCallback(async () => {
     if (realUserDoc?.role !== "SUPER_ADMIN") return;
@@ -67,6 +72,41 @@ export default function Balance() {
     [balanceEdits]
   );
 
+  const openTransactions = useCallback(async (gym) => {
+    if (!gym?.id) return;
+    setTxnsGym(gym);
+    setShowTxns(true);
+    setTxnsBusy(true);
+    try {
+      const fn = httpsCallable(functions, "listBalanceTransactions");
+      const res = await fn({ gymId: gym.id });
+      const items = Array.isArray(res.data?.items) ? res.data.items : [];
+      setTxns(items);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Failed to load transactions");
+      setTxns([]);
+    } finally {
+      setTxnsBusy(false);
+    }
+  }, []);
+
+  function formatTxnDate(ms) {
+    if (!ms) return "-";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "-";
+    const datePart = d.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    const timePart = d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `${datePart} ${timePart}`;
+  }
+
   if (realUserDoc?.role !== "SUPER_ADMIN") {
     return (
       <div style={{ padding: 24 }}>
@@ -97,6 +137,9 @@ export default function Balance() {
   return (
     <div className="superadmin-page" style={{ padding: 24 }}>
       <h2 style={{ marginTop: 0 }}>Balance</h2>
+      <PageInfo>
+        Adjust SMS balances for gyms and review their current credits.
+      </PageInfo>
 
       {!gyms.length ? (
         <p>No gyms found.</p>
@@ -115,7 +158,7 @@ export default function Balance() {
             <tbody>
               {gyms.map((gym) => (
                 <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "8px", fontWeight: 600 }}>{gym.name}</td>
+                  <td style={{ padding: "8px" }}>{gym.name}</td>
                   <td style={{ padding: "8px" }}>{gym.slug}</td>
                   <td style={{ padding: "8px" }}>{gym.currency}</td>
                   <td style={{ padding: "8px" }}>
@@ -134,6 +177,13 @@ export default function Balance() {
                     >
                       {saving[gym.id] ? "Saving…" : "Update"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => openTransactions(gym)}
+                      style={{ marginLeft: 8 }}
+                    >
+                      Latest transactions
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -141,6 +191,104 @@ export default function Balance() {
           </table>
         </div>
       )}
+
+      {showTxns ? (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowTxns(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 14,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: 820,
+              padding: 16,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>
+                Latest transactions — {txnsGym?.name || "Gym"}
+              </div>
+              <button type="button" onClick={() => setShowTxns(false)}>
+                Close
+              </button>
+            </div>
+            {txnsBusy ? (
+              <div style={{ opacity: 0.7 }}>Loading...</div>
+            ) : !txns.length ? (
+              <div style={{ opacity: 0.7 }}>No transactions yet.</div>
+            ) : (
+              <div className="table-scroll">
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #eee" }}>
+                      <th style={{ textAlign: "left", padding: "8px" }}>Date</th>
+                      <th style={{ textAlign: "left", padding: "8px" }}>Type</th>
+                      <th style={{ textAlign: "left", padding: "8px" }}>Amount</th>
+                      <th style={{ textAlign: "left", padding: "8px" }}>Reason</th>
+                      <th style={{ textAlign: "left", padding: "8px" }}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {txns.map((t) => {
+                      const amount = Number(t.amount) || 0;
+                      const isCredit = amount > 0;
+                      return (
+                        <tr key={t.id} style={{ borderTop: "1px solid #f2f2f2" }}>
+                          <td style={{ padding: "8px" }}>
+                            {formatTxnDate(t.createdAtMs)}
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            <span
+                              style={{
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: isCredit ? "#166534" : "#991b1b",
+                                background: isCredit ? "#dcfce7" : "#fee2e2",
+                              }}
+                            >
+                              {isCredit ? "Money in" : "Money out"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            {amount.toLocaleString()}
+                          </td>
+                          <td style={{ padding: "8px" }}>{t.reason || "-"}</td>
+                          <td style={{ padding: "8px" }}>
+                            {(Number(t.balanceAfter) || 0).toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
