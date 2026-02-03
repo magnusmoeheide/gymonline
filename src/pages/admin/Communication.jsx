@@ -16,6 +16,7 @@ import PageInfo from "../../components/PageInfo";
 import { getCache, setCache } from "../../app/utils/dataCache";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const EMAIL_DISABLED = true;
 
 export default function Communication() {
   const { userDoc } = useAuth();
@@ -398,6 +399,10 @@ export default function Communication() {
   }
 
   async function sendEmail() {
+    if (EMAIL_DISABLED) {
+      alert("Email sending is temporarily disabled.");
+      return;
+    }
     const gymName = String(gym?.name || "Gym");
     const prefix = `[${gymName}]: `;
     const subjRaw = String(emailSubject || "").trim();
@@ -1001,7 +1006,12 @@ export default function Communication() {
               </div>
             </div>
 
-            <button disabled={emailSendBusy} onClick={sendEmail}>
+            {EMAIL_DISABLED ? (
+              <div style={{ fontSize: 12, color: "#b91c1c" }}>
+                Email sending is temporarily disabled.
+              </div>
+            ) : null}
+            <button disabled={emailSendBusy || EMAIL_DISABLED} onClick={sendEmail}>
               {emailSendBusy ? "Sending..." : "Send Email"}
             </button>
               </div>

@@ -25,9 +25,6 @@ const TWILIO_DEFAULT_FROM = defineSecret("TWILIO_DEFAULT_FROM");
 const AFRICASTALKING_USERNAME = defineSecret("AFRICASTALKING_USERNAME");
 const AFRICASTALKING_API_KEY = defineSecret("AFRICASTALKING_API_KEY");
 // const AFRICASTALKING_SENDER_ID = defineSecret("AFRICASTALKING_SENDER_ID");
-const AWS_ACCESS_KEY_ID = defineSecret("AWS_ACCESS_KEY_ID");
-const AWS_SECRET_ACCESS_KEY = defineSecret("AWS_SECRET_ACCESS_KEY");
-const AWS_REGION = defineSecret("AWS_REGION");
 
 
 // Helpers
@@ -126,44 +123,10 @@ async function sendSesBatch({
   fromName,
   replyTo,
 }) {
-  if (!recipients?.length) return { ok: true };
-  const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
-  const client = new SESv2Client({
-    region: AWS_REGION.value(),
-    credentials: {
-      accessKeyId: AWS_ACCESS_KEY_ID.value(),
-      secretAccessKey: AWS_SECRET_ACCESS_KEY.value(),
-    },
-  });
-
-  const params = {
-    FromEmailAddress: fromName
-      ? `${fromName} <${fromEmail}>`
-      : fromEmail,
-    Destination: {
-      ToAddresses: recipients.map((r) => r.email),
-    },
-    Content: {
-      Simple: {
-        Subject: { Data: subject },
-        Body: {
-          Text: { Data: text },
-          Html: { Data: html },
-        },
-      },
-    },
-  };
-  if (replyTo) {
-    params.ReplyToAddresses = [replyTo];
-  }
-
-  try {
-    await client.send(new SendEmailCommand(params));
-    return { ok: true };
-  } catch (e) {
-    const msg = e?.message || "SES email failed";
-    throw new HttpsError("internal", `SES email failed: ${msg}`);
-  }
+  throw new HttpsError(
+    "failed-precondition",
+    "Email sending is temporarily disabled"
+  );
 }
 
 function renderTemplate(tpl, vars) {
@@ -1844,9 +1807,12 @@ exports.sendBroadcastSms = onCall(
 exports.sendBroadcastEmail = onCall(
   {
     region: "us-central1",
-    secrets: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION],
   },
   async (request) => {
+    throw new HttpsError(
+      "failed-precondition",
+      "Email sending is temporarily disabled"
+    );
     if (!request.auth)
       throw new HttpsError("unauthenticated", "Sign in required");
 

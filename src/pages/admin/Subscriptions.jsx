@@ -422,20 +422,6 @@ export default function Subscriptions() {
     }
   }
 
-  async function endSubscription(sub) {
-    if (!confirm("End this subscription now?")) return;
-    setBusy(true);
-    try {
-      await updateDoc(doc(db, "subscriptions", sub.id), {
-        status: "ended",
-        updatedAt: serverTimestamp(),
-      });
-      await load({ force: true });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   // ---- Edit popup handlers ----
   function openEdit(sub) {
     setEditErr("");
@@ -1139,13 +1125,6 @@ export default function Subscriptions() {
                     <button disabled={busy} onClick={() => openEdit(s)}>
                       Edit
                     </button>
-                    {s.status === "active" ? (
-                      <button disabled={busy} onClick={() => endSubscription(s)}>
-                        End
-                      </button>
-                    ) : (
-                      <span style={{ opacity: 0.6 }}>—</span>
-                    )}
                   </td>
                 </tr>
               );
