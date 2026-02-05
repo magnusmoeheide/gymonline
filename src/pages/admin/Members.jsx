@@ -936,12 +936,52 @@ export default function Members() {
                   onChange={(e) => setComments(e.target.value)}
                 />
               </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={sendWelcomeSms}
-                  onChange={(e) => setSendWelcomeSms(e.target.checked)}
-                />
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <span
+                  role="checkbox"
+                  aria-checked={sendWelcomeSms}
+                  tabIndex={0}
+                  onClick={() => setSendWelcomeSms((v) => !v)}
+                  onKeyDown={(e) => {
+                    if (e.key === " " || e.key === "Enter") {
+                      e.preventDefault();
+                      setSendWelcomeSms((v) => !v);
+                    }
+                  }}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 4,
+                    border: "1px solid rgba(28,24,19,.4)",
+                    background: "#fff",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flex: "0 0 18px",
+                  }}
+                >
+                  {sendWelcomeSms ? (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        color: "#111",
+                        fontSize: 12,
+                        lineHeight: 1,
+                        fontWeight: 900,
+                      }}
+                    >
+                      ✓
+                    </span>
+                  ) : null}
+                </span>
                 <span style={{ fontSize: 12, opacity: 0.8 }}>
                   Send welcome SMS
                 </span>
