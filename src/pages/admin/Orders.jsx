@@ -12,6 +12,7 @@ import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -180,6 +181,21 @@ export default function Orders() {
             </tr>
           </thead>
           <tbody>
+            {busy ? (
+              <tr>
+                <td colSpan="4">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {orders.map((o) => (
               <tr key={o.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                 <td>{o.userId}</td>
@@ -192,10 +208,10 @@ export default function Orders() {
                 </td>
               </tr>
             ))}
-            {!orders.length ? (
+            {!busy && !orders.length ? (
               <tr>
                 <td colSpan="4" style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No orders yet."}
+                  No orders yet.
                 </td>
               </tr>
             ) : null}

@@ -5,6 +5,7 @@ import { httpsCallable } from "firebase/functions";
 import { db } from "../../firebase/db";
 import { functions } from "../../firebase/functionsClient";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 export default function SuperAdminSettings() {
   const [admins, setAdmins] = useState([]);
@@ -138,10 +139,25 @@ export default function SuperAdminSettings() {
                   </td>
                 </tr>
               ))}
-              {!admins.length ? (
+              {loading ? (
+                <tr>
+                  <td colSpan="5">
+                    <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                      <Loading
+                        compact
+                        size={28}
+                        fullScreen={false}
+                        showLabel={false}
+                        fullWidth={false}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+              {!loading && !admins.length ? (
                 <tr>
                   <td colSpan="5" style={{ opacity: 0.7 }}>
-                    {loading ? "Loading…" : "No superadmins found."}
+                    No superadmins found.
                   </td>
                 </tr>
               ) : null}

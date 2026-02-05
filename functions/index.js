@@ -1060,6 +1060,57 @@ exports.updateGymAdminEmail = onCall(
   }
 );
 
+exports.updateMemberEmail = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth)
+      throw new HttpsError("unauthenticated", "Sign in required");
+
+    const caller = await getUserDoc(request.auth.uid);
+    requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN"]);
+
+    const uid = String(request.data?.uid || "").trim();
+    const email = String(request.data?.email || "").trim().toLowerCase();
+    if (!uid) throw new HttpsError("invalid-argument", "uid required");
+    if (!email) throw new HttpsError("invalid-argument", "email required");
+
+    const userRef = db.doc(`users/${uid}`);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists)
+      throw new HttpsError("not-found", "User not found");
+    const data = userSnap.data() || {};
+    if (data.role !== "MEMBER") {
+      throw new HttpsError("failed-precondition", "User is not a MEMBER");
+    }
+
+    const callerGymId = caller?.gymId || "";
+    const targetGymId = data.gymId || "";
+    if (!targetGymId) {
+      throw new HttpsError("failed-precondition", "Target user missing gymId");
+    }
+    const isSuper = caller?.role === "SUPER_ADMIN" || callerGymId === "__global__";
+    if (!isSuper && callerGymId !== targetGymId) {
+      throw new HttpsError("permission-denied", "Not allowed");
+    }
+
+    try {
+      await admin.auth().updateUser(uid, { email });
+    } catch (e) {
+      if (String(e?.code || "").includes("email-already-exists")) {
+        throw new HttpsError("already-exists", "Email already exists");
+      }
+      throw new HttpsError("internal", e?.message || "Failed to update auth");
+    }
+
+    await userRef.update({
+      email,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true };
+  }
+);
+
 exports.updateGymAdminPhone = onCall(
   { region: "us-central1" },
   async (request) => {

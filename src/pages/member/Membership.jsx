@@ -12,6 +12,7 @@ import {
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 function fmtDate(ts) {
   if (!ts) return "-";
@@ -90,7 +91,7 @@ export default function Membership() {
 
       {busy ? (
         <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-          Loading…
+          <Loading compact size={18} fullScreen={false} showLabel={false} fullWidth={false} />
         </div>
       ) : null}
 

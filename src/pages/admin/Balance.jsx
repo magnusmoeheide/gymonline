@@ -7,6 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import { functions } from "../../firebase/functionsClient";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -131,7 +132,34 @@ export default function Balance() {
       <div className="card" style={{ padding: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Transactions</div>
         {txnsLoading ? (
-          <div style={{ opacity: 0.7 }}>Loading...</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #eee" }}>
+                  <th style={{ textAlign: "left", padding: "8px" }}>Date</th>
+                  <th style={{ textAlign: "left", padding: "8px" }}>Type</th>
+                  <th style={{ textAlign: "left", padding: "8px" }}>Amount</th>
+                  <th style={{ textAlign: "left", padding: "8px" }}>Reason</th>
+                  <th style={{ textAlign: "left", padding: "8px" }}>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colSpan="5">
+                    <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                      <Loading
+                        compact
+                        size={28}
+                        fullScreen={false}
+                        showLabel={false}
+                        fullWidth={false}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         ) : txnsError ? (
           <div style={{ opacity: 0.7, color: "#991b1b" }}>{txnsError}</div>
         ) : !txns.length ? (

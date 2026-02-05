@@ -16,6 +16,7 @@ import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -84,11 +85,13 @@ function norm(s) {
 
 function statusPill(value) {
   const v = String(value || "").toLowerCase();
-  if (v === "active") return { text: "Active", color: "#166534", bg: "#dcfce7" };
+  if (v === "active")
+    return { text: "Active", color: "#166534", bg: "#dcfce7" };
   if (v === "ended") return { text: "Ended", color: "#7c2d12", bg: "#ffedd5" };
   if (v === "cancelled")
     return { text: "Cancelled", color: "#991b1b", bg: "#fee2e2" };
-  if (v === "paused") return { text: "Paused", color: "#1e3a8a", bg: "#dbeafe" };
+  if (v === "paused")
+    return { text: "Paused", color: "#1e3a8a", bg: "#dbeafe" };
   return { text: value || "-", color: "#374151", bg: "#e5e7eb" };
 }
 
@@ -141,7 +144,7 @@ export default function Subscriptions() {
   const [editPayment, setEditPayment] = useState("awaiting_payment"); // paid | awaiting_payment | comped
   const [editComments, setEditComments] = useState("");
   const [editStartDate, setEditStartDate] = useState(
-    toDateInputValue(new Date())
+    toDateInputValue(new Date()),
   );
   const [editEndDate, setEditEndDate] = useState(toDateInputValue(new Date()));
 
@@ -164,7 +167,7 @@ export default function Subscriptions() {
     try {
       localStorage.setItem(
         MEMBER_FILTER_KEY,
-        JSON.stringify({ q: memberQuery, uid: memberFilterUserId })
+        JSON.stringify({ q: memberQuery, uid: memberFilterUserId }),
       );
     } catch {}
   }, [memberQuery, memberFilterUserId]);
@@ -193,18 +196,18 @@ export default function Subscriptions() {
       const membersQ = query(
         collection(db, "users"),
         where("gymId", "==", gymId),
-        where("role", "==", "MEMBER")
+        where("role", "==", "MEMBER"),
       );
 
       const plansQ = query(
         collection(db, "plans"),
         where("gymId", "==", gymId),
-        where("isActive", "==", true)
+        where("isActive", "==", true),
       );
 
       const subsQ = query(
         collection(db, "subscriptions"),
-        where("gymId", "==", gymId)
+        where("gymId", "==", gymId),
       );
 
       const [mSnap, pSnap, sSnap] = await Promise.all([
@@ -245,12 +248,12 @@ export default function Subscriptions() {
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === planId) || null,
-    [plans, planId]
+    [plans, planId],
   );
 
   const selectedMember = useMemo(
     () => (userId ? memberMap.get(userId) || null : null),
-    [userId, memberMap]
+    [userId, memberMap],
   );
 
   const previousSubs = useMemo(() => {
@@ -310,7 +313,7 @@ export default function Subscriptions() {
     setAssignWarn(
       `Member already has a subscription until ${
         until ? fmtDate(until) : "?"
-      }.`
+      }.`,
     );
     setAssignBlocked(true);
   }, [userId, startDate, subs]);
@@ -358,7 +361,7 @@ export default function Subscriptions() {
       return setAssignErr(
         `Member already has a subscription until ${
           until ? fmtDate(until) : "?"
-        }.`
+        }.`,
       );
     }
 
@@ -380,7 +383,7 @@ export default function Subscriptions() {
         where("gymId", "==", gymId),
         where("userId", "==", userId),
         where("status", "==", "active"),
-        limit(1)
+        limit(1),
       );
       const activeSnap = await getDocs(activeQ);
       if (!activeSnap.empty) {
@@ -501,7 +504,7 @@ export default function Subscriptions() {
       .sort(
         (a, b) =>
           a.idx - b.idx ||
-          String(a.m.name || "").localeCompare(String(b.m.name || ""))
+          String(a.m.name || "").localeCompare(String(b.m.name || "")),
       )
       .slice(0, 7)
       .map((x) => x.m);
@@ -619,7 +622,6 @@ export default function Subscriptions() {
                   ))}
                 </select>
               </label>
-
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 13, opacity: 0.8 }}>Plan</div>
@@ -1052,94 +1054,113 @@ export default function Subscriptions() {
           cellPadding="8"
           style={{ borderCollapse: "collapse" }}
         >
-          <thead>
-            <tr style={{ borderBottom: "1px solid #eee" }}>
-              <th align="left">Member</th>
-              <th align="left">Plan</th>
-              <th align="left">Status</th>
-              <th align="left">Payment</th>
-              <th align="left">Start</th>
-              <th align="left">End</th>
-              <th align="left">Comments</th>
-              <th align="left">Actions</th>
+        <thead>
+          <tr style={{ borderBottom: "1px solid #eee" }}>
+            <th align="left">Member</th>
+            <th align="left">Plan</th>
+            <th align="left">Status</th>
+            <th align="left">Payment</th>
+            <th align="left">Start</th>
+            <th align="left">End</th>
+            <th align="left">Comments</th>
+            <th align="left">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {busy ? (
+            <tr>
+              <td colSpan="8">
+                <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                  <Loading
+                    compact
+                    size={28}
+                    fullScreen={false}
+                    showLabel={false}
+                    fullWidth={false}
+                  />
+                </div>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {filteredSubsSorted.map((s) => {
-              const member = memberMap.get(s.userId);
-              return (
-                <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                  <td>{memberLabel(member)}</td>
-                  <td>{s.planName || s.planId}</td>
-                  <td>
-                    {(() => {
-                      const pill = statusPill(s.status);
-                      return (
-                        <span
-                          style={{
-                            padding: "2px 8px",
-                            borderRadius: 999,
-                            fontSize: 12,
-                            fontWeight: 700,
-                            color: pill.color,
-                            background: pill.bg,
-                          }}
-                        >
-                          {pill.text}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td>
-                    {(() => {
-                      const pill = paymentPill(s.paymentStatus || "awaiting_payment");
-                      return (
-                        <span
-                          style={{
-                            padding: "2px 8px",
-                            borderRadius: 999,
-                            fontSize: 12,
-                            fontWeight: 700,
-                            color: pill.color,
-                            background: pill.bg,
-                          }}
-                        >
-                          {pill.text}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td>{fmtDate(s.startDate)}</td>
-                  <td>{fmtDate(s.endDate)}</td>
-                  <td
-                    style={{
-                      maxWidth: 260,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {s.comments || "—"}
-                  </td>
-                  <td style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <button disabled={busy} onClick={() => openEdit(s)}>
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+          ) : null}
+          {filteredSubsSorted.map((s) => {
+                const member = memberMap.get(s.userId);
+                return (
+                  <tr key={s.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                    <td>{memberLabel(member)}</td>
+                    <td>{s.planName || s.planId}</td>
+                    <td>
+                      {(() => {
+                        const pill = statusPill(s.status);
+                        return (
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: pill.color,
+                              background: pill.bg,
+                            }}
+                          >
+                            {pill.text}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td>
+                      {(() => {
+                        const pill = paymentPill(
+                          s.paymentStatus || "awaiting_payment",
+                        );
+                        return (
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: pill.color,
+                              background: pill.bg,
+                            }}
+                          >
+                            {pill.text}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td>{fmtDate(s.startDate)}</td>
+                    <td>{fmtDate(s.endDate)}</td>
+                    <td
+                      style={{
+                        maxWidth: 260,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {s.comments || "—"}
+                    </td>
+                    <td
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                    >
+                      <button disabled={busy} onClick={() => openEdit(s)}>
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
 
-            {!filteredSubsSorted.length ? (
-              <tr>
-                <td colSpan="8" style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No subscriptions found."}
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+          {!busy && !filteredSubsSorted.length ? (
+            <tr>
+              <td colSpan="8" style={{ opacity: 0.7 }}>
+                No subscriptions found.
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
     </div>
+  </div>
   );
 }

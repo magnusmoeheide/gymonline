@@ -14,6 +14,7 @@ import { useAuth } from "../../context/AuthContext";
 import { functions } from "../../firebase/functionsClient";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -93,7 +94,7 @@ export default function Members() {
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editEmail, setEditEmail] = useState(""); // display only; not editable by default
+  const [editEmail, setEditEmail] = useState("");
   const [editStatus, setEditStatus] = useState("active");
   const [editComments, setEditComments] = useState("");
 
@@ -325,16 +326,27 @@ export default function Members() {
 
     const n = normalizeName(editName);
     const p = normalizePhone(editPhone);
+    const nextEmail = normalizeEmail(editEmail);
     const st = String(editStatus || "active").trim();
     const c = String(editComments || "").trim() || null;
+    const currentEmail = normalizeEmail(memberById.get(editingId)?.email || "");
 
     if (!n) return alert("Name required");
     if (!p.startsWith("+")) return alert("Phone must be E.164 (+...)");
+    if (nextEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+      return alert("Email is invalid");
+    }
+    if (currentEmail && !nextEmail) {
+      return alert("Email cannot be empty");
+    }
 
-    // NOTE: editing email would require updating Firebase Auth user too.
-    // For now, we keep email read-only in the UI.
     setBusy(true);
     try {
+      if (nextEmail && nextEmail !== currentEmail) {
+        const fn = httpsCallable(functions, "updateMemberEmail");
+        await fn({ uid: editingId, email: nextEmail });
+      }
+
       const ref = doc(db, "users", editingId);
 
       // only patch allowed fields
@@ -526,7 +538,17 @@ export default function Members() {
 
                   {!selectedSubs.length ? (
                     <div style={{ opacity: 0.7 }}>
-                      {busy ? "Loading…" : "No subscriptions found."}
+                      {busy ? (
+                        <Loading
+                          compact
+                          size={16}
+                          fullScreen={false}
+                          showLabel={false}
+                          fullWidth={false}
+                        />
+                      ) : (
+                        "No subscriptions found."
+                      )}
                     </div>
                   ) : (
                     <div style={{ display: "grid", gap: 8 }}>
@@ -604,6 +626,21 @@ export default function Members() {
             </tr>
           </thead>
           <tbody>
+            {busy ? (
+              <tr>
+                <td colSpan="7">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {members.map((m) => {
             return (
               <tr key={m.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
@@ -686,10 +723,10 @@ export default function Members() {
               </tr>
             );
           })}
-            {!members.length ? (
+            {!busy && !members.length ? (
               <tr>
                 <td colSpan="7" style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No members yet."}
+                  No members yet.
                 </td>
               </tr>
             ) : null}
@@ -757,8 +794,8 @@ export default function Members() {
                 <span style={{ fontSize: 12, opacity: 0.7 }}>Email</span>
                 <input
                   value={editEmail}
-                  disabled
-                  title="Email is read-only"
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="name@email.com"
                 />
               </label>
               <label style={{ display: "grid", gap: 6 }}>

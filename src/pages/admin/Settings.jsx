@@ -15,6 +15,7 @@ import { functions } from "../../firebase/functionsClient";
 import { useAuth } from "../../context/AuthContext";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -322,6 +323,21 @@ export default function Settings() {
             </tr>
           </thead>
           <tbody>
+            {busy ? (
+              <tr>
+                <td colSpan="5">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {admins.map((a) => (
               <tr key={a.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                 <td>{a.name}</td>
@@ -335,10 +351,10 @@ export default function Settings() {
                 </td>
               </tr>
             ))}
-            {!admins.length ? (
+            {!busy && !admins.length ? (
               <tr>
                 <td colSpan="5" style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No gym admins yet."}
+                  No gym admins yet.
                 </td>
               </tr>
             ) : null}

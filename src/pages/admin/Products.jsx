@@ -14,6 +14,7 @@ import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
 import { getCache, setCache } from "../../app/utils/dataCache";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -186,6 +187,21 @@ export default function Products() {
             </tr>
           </thead>
           <tbody>
+            {busy ? (
+              <tr>
+                <td colSpan="5">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {products.map((p) => (
               <tr key={p.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                 <td>{p.name}</td>
@@ -216,10 +232,10 @@ export default function Products() {
                 </td>
               </tr>
             ))}
-            {!products.length ? (
+            {!busy && !products.length ? (
               <tr>
                 <td colSpan="5" style={{ opacity: 0.7 }}>
-                  {busy ? "Loading…" : "No products yet."}
+                  No products yet.
                 </td>
               </tr>
             ) : null}

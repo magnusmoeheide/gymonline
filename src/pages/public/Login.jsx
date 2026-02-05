@@ -16,6 +16,7 @@ import { useAuth } from "../../context/AuthContext";
 import useGymSlug from "../../hooks/useGymSlug";
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import { db } from "../../firebase/db";
+import Loading from "../../components/Loading";
 
 export default function Login({ embedded = false }) {
   const nav = useNavigate();
@@ -610,9 +611,7 @@ export default function Login({ embedded = false }) {
         ) : null}
 
         {authLoading ? (
-          <div style={{ padding: "10px 0", fontSize: 14, opacity: 0.75 }}>
-            Loading…
-          </div>
+          <Loading compact size={20} minHeight={80} />
         ) : (
           <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

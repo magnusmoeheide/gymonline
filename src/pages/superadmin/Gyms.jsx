@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase/functionsClient";
 import PageInfo from "../../components/PageInfo";
+import Loading from "../../components/Loading";
 
 const DEFAULT_BLOCK_MESSAGE =
   "Access has been blocked. Please contact us.";
@@ -393,15 +394,6 @@ export default function Gyms() {
     );
   }
 
-  if (loading) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>Gyms</h2>
-        <p>Loading...</p>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div style={{ padding: 24 }}>
@@ -455,90 +447,108 @@ export default function Gyms() {
         Create gyms, manage admins, and control gym access.
       </PageInfo>
 
-      {gyms.length === 0 ? (
-        <p>No gyms found.</p>
-      ) : (
-        <div className="table-scroll">
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #ddd" }}>
-                <th style={{ textAlign: "left", padding: "8px" }}>Gym Name</th>
-                <th style={{ textAlign: "left", padding: "8px" }}>Slug</th>
-                <th style={{ textAlign: "left", padding: "8px" }}>Admins</th>
-                <th style={{ textAlign: "left", padding: "8px" }}>Actions</th>
+      <div className="table-scroll">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #ddd" }}>
+              <th style={{ textAlign: "left", padding: "8px" }}>Gym Name</th>
+              <th style={{ textAlign: "left", padding: "8px" }}>Slug</th>
+              <th style={{ textAlign: "left", padding: "8px" }}>Admins</th>
+              <th style={{ textAlign: "left", padding: "8px" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan="4">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {gyms.map((gym) => (
-                <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "8px" }}>
-                    <div>{gym.name}</div>
-                    {gym.accessBlocked ? (
-                      <div style={{ fontSize: 12, color: "#991b1b" }}>
-                        Login disabled
-                      </div>
-                    ) : null}
-                  </td>
-                  <td style={{ padding: "8px" }}>{gym.slug}</td>
-                  <td style={{ padding: "8px" }}>
-                    {gym.admins?.length ? (
-                      <div style={{ display: "grid", gap: 4 }}>
-                        {gym.admins.map((a) => (
-                          <div key={a.id}>
-                            {a.name || a.email}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ opacity: 0.6 }}>No admins</span>
-                    )}
-                  </td>
-                  <td style={{ padding: "8px" }}>
-                    <button
-                      onClick={() => handleAccessGym(gym)}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        border: "1px solid #ccc",
-                        background: "#fff",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Access Gym
-                    </button>
-                    <button
-                      onClick={() => startAssign(gym.id)}
-                      style={{
-                        marginLeft: 8,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        border: "1px solid #ccc",
-                        background: "#fff",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Manage admins
-                    </button>
-                    <button
-                      onClick={() => startEditGym(gym)}
-                      style={{
-                        marginLeft: 8,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        border: "1px solid #ccc",
-                        background: "#fff",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Edit gym
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            ) : null}
+            {gyms.map((gym) => (
+              <tr key={gym.id} style={{ borderBottom: "1px solid #eee" }}>
+                <td style={{ padding: "8px" }}>
+                  <div>{gym.name}</div>
+                  {gym.accessBlocked ? (
+                    <div style={{ fontSize: 12, color: "#991b1b" }}>
+                      Login disabled
+                    </div>
+                  ) : null}
+                </td>
+                <td style={{ padding: "8px" }}>{gym.slug}</td>
+                <td style={{ padding: "8px" }}>
+                  {gym.admins?.length ? (
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {gym.admins.map((a) => (
+                        <div key={a.id}>
+                          {a.name || a.email}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span style={{ opacity: 0.6 }}>No admins</span>
+                  )}
+                </td>
+                <td style={{ padding: "8px" }}>
+                  <button
+                    onClick={() => handleAccessGym(gym)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Access Gym
+                  </button>
+                  <button
+                    onClick={() => startAssign(gym.id)}
+                    style={{
+                      marginLeft: 8,
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Manage admins
+                  </button>
+                  <button
+                    onClick={() => startEditGym(gym)}
+                    style={{
+                      marginLeft: 8,
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit gym
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!loading && gyms.length === 0 ? (
+              <tr>
+                <td colSpan="4" style={{ opacity: 0.7 }}>
+                  No gyms found.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
 
       {showCreate ? (
         <div

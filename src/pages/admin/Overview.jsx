@@ -5,6 +5,7 @@ import { db } from "../../firebase/db";
 import { useAuth, SIM_KEY } from "../../context/AuthContext";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCache, setCache } from "../../app/utils/dataCache";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -218,6 +219,18 @@ export default function Overview() {
     return { yearTotal, monthTotal };
   }, [subs, orders]);
 
+  const statLoading = (
+    <div style={{ height: 28, display: "flex", alignItems: "center" }}>
+      <Loading
+        compact
+        size={18}
+        fullScreen={false}
+        showLabel={false}
+        fullWidth={false}
+      />
+    </div>
+  );
+
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <h2>Admin Overview</h2>
@@ -234,7 +247,7 @@ export default function Overview() {
               Current active subscriptions
             </div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
-              {busy ? "—" : activeSubs.length}
+              {busy ? statLoading : activeSubs.length}
             </div>
           </div>
           <div className="card" style={{ padding: 14 }}>
@@ -242,14 +255,14 @@ export default function Overview() {
               Active members / total
             </div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
-              {busy ? "—" : `${activeMemberCount} / ${members.length}`}
+              {busy ? statLoading : `${activeMemberCount} / ${members.length}`}
             </div>
           </div>
           <div className="card" style={{ padding: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this month</div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
               {busy
-                ? "—"
+                ? statLoading
                 : `${money(revenueStats.monthTotal)} ${userDoc?.currency || ""}`}
             </div>
           </div>
@@ -257,7 +270,7 @@ export default function Overview() {
             <div style={{ fontSize: 12, opacity: 0.7 }}>Revenue this year</div>
             <div style={{ fontSize: 22, fontWeight: 800 }}>
               {busy
-                ? "—"
+                ? statLoading
                 : `${money(revenueStats.yearTotal)} ${userDoc?.currency || ""}`}
             </div>
           </div>

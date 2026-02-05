@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, getDocs, updateDoc, doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase/db";
 import { useAuth } from "../../context/AuthContext";
+import Loading from "../../components/Loading";
+import PageInfo from "../../components/PageInfo";
 
 function toNumber(v) {
   const n = Number(v);
@@ -132,12 +134,12 @@ export default function Rates() {
   }
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
-      <h2>Rates</h2>
-      <div className="card" style={{ padding: 12, maxWidth: 820 }}>
+    <div className="superadmin-page" style={{ padding: 24, display: "grid", gap: 20 }}>
+      <h2 style={{ marginTop: 0 }}>Rates</h2>
+      <PageInfo>
         Set per‑gym rates for SMS, email, and monthly billing per subscribing
         user.
-      </div>
+      </PageInfo>
       <div className="card" style={{ padding: 12, maxWidth: 820 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>
           Default rates for new gyms
@@ -197,65 +199,77 @@ export default function Rates() {
             </tr>
           </thead>
           <tbody>
-            {!rows.length ? (
+            {busy ? (
               <tr>
-                <td colSpan="5" style={{ opacity: 0.7 }}>
-                  {busy
-                    ? "Loading…"
-                    : error
-                    ? `Error: ${error}`
-                    : "No gyms found."}
+                <td colSpan="5">
+                  <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <Loading
+                      compact
+                      size={28}
+                      fullScreen={false}
+                      showLabel={false}
+                      fullWidth={false}
+                    />
+                  </div>
                 </td>
               </tr>
-            ) : (
-              rows.map((r) => {
-                const d = getDraft(r.id);
-                return (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                    <td style={{ fontWeight: 700 }}>{r.name}</td>
-                    <td>
-                      <input
-                        value={d.smsRate}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [r.id]: { ...getDraft(r.id), smsRate: e.target.value },
-                          }))
-                        }
-                        style={{ maxWidth: 140 }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={d.emailRate}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [r.id]: { ...getDraft(r.id), emailRate: e.target.value },
-                          }))
-                        }
-                        style={{ maxWidth: 140 }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={d.perUserRate}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [r.id]: { ...getDraft(r.id), perUserRate: e.target.value },
-                          }))
-                        }
-                        style={{ maxWidth: 160 }}
-                      />
-                    </td>
-                    <td>
-                      <button onClick={() => saveRates(r.id)}>Save</button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
+            ) : null}
+            {!busy && !rows.length ? (
+              <tr>
+                <td colSpan="5" style={{ opacity: 0.7 }}>
+                  {error ? `Error: ${error}` : "No gyms found."}
+                </td>
+              </tr>
+            ) : null}
+            {!busy
+              ? rows.map((r) => {
+                  const d = getDraft(r.id);
+                  return (
+                    <tr key={r.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                      <td style={{ fontWeight: 700 }}>{r.name}</td>
+                      <td>
+                        <input
+                          value={d.smsRate}
+                          onChange={(e) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [r.id]: { ...getDraft(r.id), smsRate: e.target.value },
+                            }))
+                          }
+                          style={{ maxWidth: 140 }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={d.emailRate}
+                          onChange={(e) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [r.id]: { ...getDraft(r.id), emailRate: e.target.value },
+                            }))
+                          }
+                          style={{ maxWidth: 140 }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={d.perUserRate}
+                          onChange={(e) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [r.id]: { ...getDraft(r.id), perUserRate: e.target.value },
+                            }))
+                          }
+                          style={{ maxWidth: 160 }}
+                        />
+                      </td>
+                      <td>
+                        <button onClick={() => saveRates(r.id)}>Save</button>
+                      </td>
+                    </tr>
+                  );
+                })
+              : null}
           </tbody>
         </table>
       </div>

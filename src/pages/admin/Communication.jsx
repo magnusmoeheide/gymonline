@@ -14,6 +14,7 @@ import { functions } from "../../firebase/functionsClient";
 import { useAuth } from "../../context/AuthContext";
 import PageInfo from "../../components/PageInfo";
 import { getCache, setCache } from "../../app/utils/dataCache";
+import Loading from "../../components/Loading";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const EMAIL_DISABLED = true;
@@ -1297,12 +1298,25 @@ export default function Communication() {
                   </tr>
                 );
               })}
-              {!combinedLogs.length ? (
+              {logsBusy || emailLogsBusy ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: "12px" }}>
+                    <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                      <Loading
+                        compact
+                        size={28}
+                        fullScreen={false}
+                        showLabel={false}
+                        fullWidth={false}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+              {!logsBusy && !emailLogsBusy && !combinedLogs.length ? (
                 <tr>
                   <td colSpan={7} style={{ padding: "12px", opacity: 0.6 }}>
-                    {logsBusy || emailLogsBusy
-                      ? "Loading..."
-                      : "No records yet."}
+                    No records yet.
                   </td>
                 </tr>
               ) : null}
