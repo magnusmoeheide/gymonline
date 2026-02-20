@@ -20,6 +20,11 @@ export default function Balance() {
   const [txns, setTxns] = useState([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
   const [txnsError, setTxnsError] = useState("");
+  const [topUpPhone, setTopUpPhone] = useState("");
+  const [topUpAmount, setTopUpAmount] = useState("");
+  const [topUpLoading, setTopUpLoading] = useState(false);
+  const [topUpError, setTopUpError] = useState("");
+  const [topUpSuccess, setTopUpSuccess] = useState("");
 
   function formatTxnDate(ms) {
     if (!ms) return "-";
@@ -35,6 +40,45 @@ export default function Balance() {
       minute: "2-digit",
     });
     return `${datePart} ${timePart}`;
+  }
+
+  function normalizePhoneNumber(raw) {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (/^2547\d{8}$/.test(digits)) return digits;
+    if (/^07\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+    if (/^7\d{8}$/.test(digits)) return `254${digits}`;
+    return digits;
+  }
+
+  async function handleTopUp() {
+    setTopUpError("");
+    setTopUpSuccess("");
+
+    const amount = Number(topUpAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTopUpError("Enter a valid amount.");
+      return;
+    }
+
+    const phoneNumber = normalizePhoneNumber(`254${topUpPhone}`);
+    if (!/^2547\d{8}$/.test(phoneNumber)) {
+      setTopUpError("Use a valid M-Pesa phone number (+2547XXXXXXXX).");
+      return;
+    }
+
+    setTopUpLoading(true);
+    try {
+      const fn = httpsCallable(functions, "stkPush");
+      const res = await fn({ phoneNumber, amount });
+      const message =
+        res.data?.CustomerMessage ||
+        "STK Push sent. Complete payment on your phone.";
+      setTopUpSuccess(message);
+    } catch (err) {
+      setTopUpError(err?.message || "Failed to start top up.");
+    } finally {
+      setTopUpLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -102,35 +146,98 @@ export default function Balance() {
       .finally(() => setTxnsLoading(false));
   }, [resolvedGymId, gymId]);
 
-  const balance = Number(gym?.cashBalance || 0);
+const balance = Number(gym?.cashBalance || 0);
 
-  return (
-    <div style={{ display: "grid", gap: 20 }}>
-      <h2>Balance</h2>
-      <PageInfo>
-        Review your SMS credit balance and transaction history.
-      </PageInfo>
+return (
+  <div style={{ display: "grid", gap: 20 }}>
+    <h2>Balance</h2>
+    <PageInfo>
+      Review your SMS credit balance and transaction history.
+    </PageInfo>
 
-      <div className="card" style={{ padding: 16, maxWidth: 520 }}>
-        <div style={{ fontSize: 12, opacity: 0.7 }}>Current balance</div>
-        <div style={{ fontSize: 24, fontWeight: 800 }}>
-          {loading ? "—" : balance.toLocaleString()}
-        </div>
+    <div className="card" style={{ padding: 16, maxWidth: 520 }}>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>Current balance</div>
+      <div style={{ fontSize: 24, fontWeight: 800 }}>
+        {loading ? "—" : balance.toLocaleString()}
       </div>
+    </div>
 
-      <div className="card" style={{ padding: 16, maxWidth: 720 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Top up</div>
-        <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 10 }}>
-          Top ups are coming soon. You will be able to add credit to your gym
-          balance here.
-        </div>
-        <button type="button" disabled>
-          Add balance (coming soon)
-        </button>
+    <div className="card" style={{ padding: 16, maxWidth: 520 }}>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>Top Up</div>
+      <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 10 }}>
+        Add credit to your gym balance via M-Pesa.
       </div>
+      <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            border: "1px solid #ddd",
+            borderRadius: 6,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "8px 10px",
+              background: "#f9fafb",
+              borderRight: "1px solid #ddd",
+              fontWeight: 600,
+            }}
+          >
+            +254
+          </div>
+          <input
+            type="tel"
+            inputMode="numeric"
+            maxLength={9}
+            placeholder="7XXXXXXXX"
+            value={topUpPhone}
+            onChange={(e) =>
+              setTopUpPhone(e.target.value.replace(/\D/g, "").slice(0, 9))
+            }
+            style={{ padding: "8px 10px", border: "none", outline: "none", width: "100%" }}
+          />
+        </div>
+        <input
+          type="number"
+          min="1"
+          placeholder="Amount"
+          value={topUpAmount}
+          onChange={(e) => setTopUpAmount(e.target.value)}
+          style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #ddd" }}
+        />
+      </div>
+      <button
+        type="button"
+        disabled={topUpLoading}
+        style={{
+          padding: "8px 16px",
+          fontWeight: 600,
+          backgroundColor: "#166534",
+          color: "white",
+          borderRadius: 6,
+          opacity: topUpLoading ? 0.7 : 1,
+          cursor: topUpLoading ? "not-allowed" : "pointer",
+        }}
+        onClick={handleTopUp}
+      >
+        {topUpLoading ? "Sending..." : "Add balance"}
+      </button>
+      {!!topUpError && (
+        <div style={{ marginTop: 10, color: "#991b1b", fontSize: 13 }}>
+          {topUpError}
+        </div>
+      )}
+      {!!topUpSuccess && (
+        <div style={{ marginTop: 10, color: "#166534", fontSize: 13 }}>
+          {topUpSuccess}
+        </div>
+      )}
+    </div>
 
       <div className="card" style={{ padding: 16 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Transactions</div>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>Transactions</div>
         {txnsLoading ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>

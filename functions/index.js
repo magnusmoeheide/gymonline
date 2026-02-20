@@ -1,5 +1,5 @@
 // functions/index.js
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const { defineSecret } = require("firebase-functions/params");
@@ -24,6 +24,11 @@ const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
 const TWILIO_DEFAULT_FROM = defineSecret("TWILIO_DEFAULT_FROM");
 const AFRICASTALKING_USERNAME = defineSecret("AFRICASTALKING_USERNAME");
 const AFRICASTALKING_API_KEY = defineSecret("AFRICASTALKING_API_KEY");
+const MPESA_CONSUMER_KEY = defineSecret("MPESA_CONSUMER_KEY");
+const MPESA_CONSUMER_SECRET = defineSecret("MPESA_CONSUMER_SECRET");
+const MPESA_PASSKEY = defineSecret("MPESA_PASSKEY");
+const MPESA_SHORTCODE = defineSecret("MPESA_SHORTCODE");
+const MPESA_CALLBACK_TOKEN = defineSecret("MPESA_CALLBACK_TOKEN");
 // const AFRICASTALKING_SENDER_ID = defineSecret("AFRICASTALKING_SENDER_ID");
 
 
@@ -2158,3 +2163,371 @@ exports.listBalanceTransactions = onCall(
     return { ok: true, items };
   }
 );
+
+const axios = require("axios");
+const base64 = require("base-64");
+
+function getMpesaCallbackUrl(callbackToken) {
+  const configured = String(process.env.MPESA_CALLBACK_URL || "").trim();
+  if (configured) {
+    if (!callbackToken) return configured;
+    const url = new URL(configured);
+    url.searchParams.set("token", callbackToken);
+    return url.toString();
+  }
+
+  const projectId =
+    String(process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "").trim();
+  if (!projectId) return "";
+
+  const url = new URL(
+    `https://us-central1-${projectId}.cloudfunctions.net/mpesaCallback`
+  );
+  if (callbackToken) {
+    url.searchParams.set("token", callbackToken);
+  }
+  return url.toString();
+}
+
+function extractCallbackMetadata(items) {
+  const map = {};
+  for (const item of Array.isArray(items) ? items : []) {
+    const name = String(item?.Name || "").trim();
+    if (!name) continue;
+    map[name] = item?.Value;
+  }
+  return map;
+}
+
+// Function to get OAuth token from Daraja Sandbox
+function isAuthorizedMpesaCallback(req, callbackToken) {
+  const token = String(callbackToken || "").trim();
+  if (!token) return false;
+  const queryToken = String(req.query?.token || "").trim();
+  const headerToken = String(req.get("x-mpesa-callback-token") || "").trim();
+  return queryToken === token || headerToken === token;
+}
+
+async function getAccessToken(consumerKey, consumerSecret) {
+  const url = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials";
+  const auth = base64.encode(`${consumerKey}:${consumerSecret}`);
+  const response = await axios.get(url, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  return response.data.access_token;
+}
+
+// Firebase Callable Function for STK Push
+exports.stkPush = onCall(
+  {
+    region: "us-central1",
+    secrets: [
+      MPESA_CONSUMER_KEY,
+      MPESA_CONSUMER_SECRET,
+      MPESA_PASSKEY,
+      MPESA_SHORTCODE,
+      MPESA_CALLBACK_TOKEN,
+    ],
+  },
+  async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Sign in required");
+  }
+
+  const caller = await getUserDoc(request.auth.uid);
+  requireRole(caller, ["GYM_ADMIN", "SUPER_ADMIN", "STAFF"]);
+  const { gymId } = await resolveCallerGym(caller, request.data);
+
+  const phoneNumber = String(request.data?.phoneNumber || "").replace(/\D/g, "");
+  const amount = Number(request.data?.amount);
+  if (!/^2547\d{8}$/.test(phoneNumber)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "phoneNumber must be in 2547XXXXXXXX format"
+    );
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new HttpsError("invalid-argument", "amount must be greater than 0");
+  }
+
+  const consumerKey = String(MPESA_CONSUMER_KEY.value() || "").trim();
+  const consumerSecret = String(MPESA_CONSUMER_SECRET.value() || "").trim();
+  const passkey = String(MPESA_PASSKEY.value() || "").trim();
+  const shortcode = String(MPESA_SHORTCODE.value() || "").trim();
+  const callbackToken = String(MPESA_CALLBACK_TOKEN.value() || "").trim();
+  if (!consumerKey || !consumerSecret || !passkey || !shortcode || !callbackToken) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Missing M-Pesa secrets. Set MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_PASSKEY, MPESA_SHORTCODE, and MPESA_CALLBACK_TOKEN."
+    );
+  }
+
+  const callbackUrl = getMpesaCallbackUrl(callbackToken);
+  if (!callbackUrl) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Missing callback URL. Set MPESA_CALLBACK_URL env variable."
+    );
+  }
+
+  try {
+    const token = await getAccessToken(consumerKey, consumerSecret);
+
+    // Timestamp in the format YYYYMMDDHHMMSS
+    const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    const password = base64.encode(`${shortcode}${passkey}${timestamp}`);
+
+    const body = {
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: "CustomerPayBillOnline",
+      Amount: Math.round(amount),
+      PartyA: phoneNumber,
+      PartyB: shortcode,
+      PhoneNumber: phoneNumber,
+      CallBackURL: callbackUrl,
+      AccountReference: `GymTopUp-${gymId}`.slice(0, 20),
+      TransactionDesc: "Top up gym balance",
+    };
+
+    const response = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+      body,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    const resData = response.data || {};
+    const checkoutRequestId = String(resData.CheckoutRequestID || "").trim();
+    const merchantRequestId = String(resData.MerchantRequestID || "").trim();
+    if (checkoutRequestId) {
+      await db.doc(`mpesaTopups/${checkoutRequestId}`).set(
+        {
+          gymId,
+          amountRequested: Math.round(amount),
+          phoneNumber,
+          checkoutRequestId,
+          merchantRequestId: merchantRequestId || null,
+          status: "pending",
+          initiatedBy: request.auth.uid,
+          initiatedAt: FieldValue.serverTimestamp(),
+          mpesaResponse: resData,
+        },
+        { merge: true }
+      );
+    }
+
+    return { ok: true, ...resData };
+  } catch (err) {
+    const detail = err?.response?.data || err?.message || "STK Push failed";
+    logger.error("STK Push error", detail);
+    throw new HttpsError(
+      "internal",
+      typeof detail === "string" ? detail : "STK Push failed"
+    );
+  }
+});
+
+exports.mpesaCallback = onRequest(
+  { region: "us-central1", secrets: [MPESA_CALLBACK_TOKEN] },
+  async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, message: "Method not allowed" });
+    return;
+  }
+
+  const callbackToken = String(MPESA_CALLBACK_TOKEN.value() || "").trim();
+  if (!isAuthorizedMpesaCallback(req, callbackToken)) {
+    logger.warn("Blocked unauthorized M-Pesa callback");
+    res.status(403).json({ ok: false, message: "Forbidden" });
+    return;
+  }
+
+  try {
+    const callback = req.body?.Body?.stkCallback || null;
+    if (!callback) {
+      logger.warn("Invalid M-Pesa callback payload", req.body || {});
+      res.status(400).json({ ok: false, message: "Invalid callback payload" });
+      return;
+    }
+
+    const checkoutRequestId = String(callback.CheckoutRequestID || "").trim();
+    const merchantRequestId = String(callback.MerchantRequestID || "").trim();
+    const resultCode = Number(callback.ResultCode);
+    const resultDesc = String(callback.ResultDesc || "").trim() || null;
+    const metadata = extractCallbackMetadata(callback.CallbackMetadata?.Item);
+
+    const paidAmount = Number(metadata.Amount) || 0;
+    const mpesaReceiptNumber =
+      String(metadata.MpesaReceiptNumber || "").trim() || null;
+    const transactionDate = String(metadata.TransactionDate || "").trim() || null;
+    const phoneNumber =
+      String(metadata.PhoneNumber || "").replace(/\D/g, "") || null;
+
+    if (!checkoutRequestId) {
+      logger.error("M-Pesa callback missing CheckoutRequestID", callback);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    const topupRef = db.doc(`mpesaTopups/${checkoutRequestId}`);
+    let logData = null;
+
+    await db.runTransaction(async (tx) => {
+      const topupSnap = await tx.get(topupRef);
+      if (!topupSnap.exists) {
+        tx.set(
+          topupRef,
+          {
+            checkoutRequestId,
+            merchantRequestId: merchantRequestId || null,
+            status: resultCode === 0 ? "orphan_success" : "failed",
+            resultCode: Number.isFinite(resultCode) ? resultCode : null,
+            resultDesc,
+            paidAmount: paidAmount || null,
+            mpesaReceiptNumber,
+            phoneNumber,
+            transactionDate,
+            callbackBody: req.body || null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return;
+      }
+
+      const topup = topupSnap.data() || {};
+      const gymId = String(topup.gymId || "").trim();
+      const currentStatus = String(topup.status || "").trim();
+      if (currentStatus === "credited") return;
+
+      if (resultCode !== 0) {
+        tx.set(
+          topupRef,
+          {
+            status: "failed",
+            resultCode: Number.isFinite(resultCode) ? resultCode : null,
+            resultDesc,
+            phoneNumber,
+            callbackBody: req.body || null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return;
+      }
+
+      if (!gymId) {
+        tx.set(
+          topupRef,
+          {
+            status: "orphan_success",
+            resultCode: 0,
+            resultDesc,
+            paidAmount: paidAmount || null,
+            mpesaReceiptNumber,
+            phoneNumber,
+            transactionDate,
+            callbackBody: req.body || null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return;
+      }
+
+      const gymRef = db.doc(`gyms/${gymId}`);
+      const gymSnap = await tx.get(gymRef);
+      if (!gymSnap.exists) {
+        tx.set(
+          topupRef,
+          {
+            status: "orphan_success",
+            resultCode: 0,
+            resultDesc: "Gym not found during callback credit",
+            paidAmount: paidAmount || null,
+            mpesaReceiptNumber,
+            phoneNumber,
+            transactionDate,
+            callbackBody: req.body || null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return;
+      }
+
+      const creditAmount =
+        paidAmount > 0 ? paidAmount : Number(topup.amountRequested) || 0;
+      if (creditAmount <= 0) {
+        tx.set(
+          topupRef,
+          {
+            status: "failed",
+            resultCode: 0,
+            resultDesc: "Invalid paid amount in callback",
+            callbackBody: req.body || null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return;
+      }
+
+      const before = Number(gymSnap.data()?.cashBalance) || 0;
+      const after = before + creditAmount;
+      tx.update(gymRef, {
+        cashBalance: after,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      tx.set(
+        topupRef,
+        {
+          status: "credited",
+          resultCode: 0,
+          resultDesc,
+          paidAmount: creditAmount,
+          mpesaReceiptNumber,
+          phoneNumber,
+          transactionDate,
+          balanceBefore: before,
+          balanceAfter: after,
+          creditedAt: FieldValue.serverTimestamp(),
+          callbackBody: req.body || null,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      logData = {
+        gymId,
+        amount: creditAmount,
+        balanceBefore: before,
+        balanceAfter: after,
+      };
+    });
+
+    if (logData) {
+      await logBalanceTransaction({
+        gymId: logData.gymId,
+        amount: logData.amount,
+        type: "credit",
+        reason: "mpesa_topup",
+        balanceBefore: logData.balanceBefore,
+        balanceAfter: logData.balanceAfter,
+        meta: {
+          checkoutRequestId,
+          merchantRequestId: merchantRequestId || null,
+          mpesaReceiptNumber,
+          phoneNumber,
+        },
+      });
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    logger.error("M-Pesa callback processing error", err);
+    res.status(200).json({ ok: true });
+  }
+});
