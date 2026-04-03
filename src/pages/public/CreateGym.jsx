@@ -3,7 +3,11 @@ import { useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { doc, getDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth, authPersistenceReady } from "../../firebase/auth";
+import {
+  auth,
+  authPersistenceReady,
+  firebaseAuthUnavailableReason,
+} from "../../firebase/auth";
 import { functions } from "../../firebase/functionsClient";
 import { db } from "../../firebase/db";
 
@@ -21,9 +25,21 @@ export default function CreateGym() {
   const [adminPhoneLocal, setAdminPhoneLocal] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [err, setErr] = useState("");
+
+  const createGymUnavailable = !auth || !functions || !db;
+  const createGymUnavailableMessage =
+    firebaseAuthUnavailableReason ||
+    "Gym creation is temporarily unavailable on this deployment.";
 
   async function createGym(e) {
     e.preventDefault();
+    setErr("");
+
+    if (createGymUnavailable) {
+      setErr(createGymUnavailableMessage);
+      return;
+    }
 
     if (!gymName.trim()) return alert("Gym name required");
     const derivedSlug = gymName.replace(/\s+/g, "").toLowerCase();
@@ -131,6 +147,22 @@ export default function CreateGym() {
           </div>
         </div>
 
+        {createGymUnavailable ? (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid rgba(245, 158, 11, .35)",
+              background: "rgba(255, 247, 237, 1)",
+              color: "rgba(28,24,19,.9)",
+              fontSize: 13,
+            }}
+          >
+            {createGymUnavailableMessage}
+          </div>
+        ) : null}
+
         <form onSubmit={createGym} style={{ display: "grid", gap: 10 }}>
           <input
             placeholder="Gym name"
@@ -172,10 +204,26 @@ export default function CreateGym() {
             onChange={(e) => setAdminPassword(e.target.value)}
           />
 
-          <button className="btn-primary" disabled={busy}>
+          <button className="btn-primary" disabled={busy || createGymUnavailable}>
             {busy ? "Creating…" : "Create gym"}
           </button>
         </form>
+
+        {err ? (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid rgba(220, 38, 38, .35)",
+              background: "rgba(220, 38, 38, .10)",
+              color: "rgba(28,24,19,.9)",
+              fontSize: 13,
+            }}
+          >
+            {err}
+          </div>
+        ) : null}
 
         <div style={{ marginTop: 16, fontSize: 13, opacity: 0.9 }}>
           <a href="/login">Back to login</a>

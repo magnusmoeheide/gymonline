@@ -74,7 +74,9 @@ function Navbar({ mode = "member" }) {
 
   const handleLogout = useCallback(async () => {
     stopSimulation();
-    signOut(auth).catch(() => {});
+    if (auth) {
+      signOut(auth).catch(() => {});
+    }
     window.location.replace("/");
   }, [stopSimulation]);
 

@@ -28,6 +28,15 @@ export default function useGymSlug() {
         return;
       }
 
+      if (!db) {
+        if (!alive) return;
+        setError(new Error("Firestore is unavailable."));
+        setGymId(null);
+        setExists(false);
+        setLoading(false);
+        return;
+      }
+
       try {
         const snap = await getDoc(doc(db, "slugs", slug));
         if (!alive) return;

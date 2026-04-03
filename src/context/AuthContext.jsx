@@ -9,7 +9,11 @@ import {
 } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
-import { auth } from "../firebase/auth";
+import {
+  auth,
+  firebaseAuthAvailable,
+  firebaseAuthUnavailableReason,
+} from "../firebase/auth";
 import { db } from "../firebase/db";
 
 const AuthContext = createContext(null);
@@ -33,6 +37,12 @@ export function AuthProvider({ children }) {
 
   // 1) Auth only
   useEffect(() => {
+    if (!firebaseAuthAvailable || !auth) {
+      setAuthUser(null);
+      setAuthReady(true);
+      return undefined;
+    }
+
     return onAuthStateChanged(auth, (u) => {
       setAuthUser(u || null);
       setAuthReady(true);
@@ -64,6 +74,7 @@ export function AuthProvider({ children }) {
 
     async function safeSignOut(reason) {
       console.error("AuthContext: signing out:", reason);
+      if (!auth) return;
       try {
         await signOut(auth);
       } catch (e) {
@@ -85,6 +96,10 @@ export function AuthProvider({ children }) {
       setLoading(true);
 
       try {
+        if (!db) {
+          throw new Error("Firestore is unavailable.");
+        }
+
         // Guard reserved auth UIDs
         if (typeof authUser.uid === "string" && authUser.uid.startsWith("__")) {
           await safeSignOut(`reserved auth uid: ${authUser.uid}`);
@@ -244,6 +259,8 @@ export function AuthProvider({ children }) {
       gymName,
       loading,
       authReady,
+      firebaseAuthAvailable,
+      firebaseAuthUnavailableReason,
       startSimulation,
       stopSimulation,
       isSimulated: !!userDoc?.__simulated,
@@ -255,6 +272,8 @@ export function AuthProvider({ children }) {
       gymName,
       loading,
       authReady,
+      firebaseAuthAvailable,
+      firebaseAuthUnavailableReason,
       startSimulation,
       stopSimulation,
     ],

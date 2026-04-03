@@ -2,13 +2,28 @@
 import { Navigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import Loading from "../../components/Loading";
+import FeatureUnavailable from "../../components/FeatureUnavailable";
 
 export default function RequireAuth({ children }) {
-  const { authUser, loading } = useAuth();
+  const {
+    authUser,
+    loading,
+    firebaseAuthAvailable,
+    firebaseAuthUnavailableReason,
+  } = useAuth();
   const loc = useLocation();
   const params = useParams();
   const slug = params?.slug ? String(params.slug) : "";
   const tenantLogin = slug ? `/${slug}/login` : "/login";
+
+  if (!firebaseAuthAvailable) {
+    return (
+      <FeatureUnavailable
+        title="Sign-in unavailable"
+        message={firebaseAuthUnavailableReason}
+      />
+    );
+  }
 
   if (loading) return <Loading />;
 

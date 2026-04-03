@@ -10,7 +10,12 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from "firebase/auth";
-import { auth, authPersistenceReady } from "../../firebase/auth";
+import {
+  auth,
+  authPersistenceReady,
+  firebaseAuthAvailable,
+  firebaseAuthUnavailableReason,
+} from "../../firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import useGymSlug from "../../hooks/useGymSlug";
@@ -47,6 +52,10 @@ export default function Login({ embedded = false }) {
   const tenantBasePath = basePath || (slug ? `/${slug}` : undefined);
 
   const dbRef = useMemo(() => db, []);
+  const authUnavailable = !firebaseAuthAvailable || !auth;
+  const authUnavailableMessage =
+    firebaseAuthUnavailableReason ||
+    "Sign-in is temporarily unavailable on this deployment.";
 
   const [gymsLoading, setGymsLoading] = useState(false);
   const [gyms, setGyms] = useState([]);
@@ -72,7 +81,7 @@ export default function Login({ embedded = false }) {
   }, []);
 
   useEffect(() => {
-    if (recaptchaRef.current) return;
+    if (recaptchaRef.current || !auth) return;
     recaptchaRef.current = new RecaptchaVerifier(
       auth,
       "recaptcha-container",
@@ -117,6 +126,12 @@ export default function Login({ embedded = false }) {
       setGymsLoading(true);
       setErr("");
 
+      if (!dbRef) {
+        setGyms([]);
+        setGymsLoading(false);
+        return;
+      }
+
       try {
         const gymsSnap = await getDocs(collection(dbRef, "gymsPublic"));
 
@@ -152,7 +167,7 @@ export default function Login({ embedded = false }) {
   }, [dbRef, slug]);
 
   useEffect(() => {
-    if (!slugGymId) {
+    if (!slugGymId || !dbRef) {
       setGymPublic(null);
       return;
     }
@@ -278,7 +293,7 @@ export default function Login({ embedded = false }) {
   ]);
 
   async function resolveUserDoc(u) {
-    if (!u) return null;
+    if (!u || !dbRef) return null;
     try {
       if (u.uid) {
         const snap = await getDoc(doc(dbRef, "users", u.uid));
@@ -320,6 +335,11 @@ export default function Login({ embedded = false }) {
   }
 
   async function routeAfterLogin(u) {
+    if (!dbRef) {
+      setErr("Gym data is temporarily unavailable.");
+      return;
+    }
+
     const docData = await resolveUserDoc(u);
     const role = docData?.role || "";
     const docSlug = docData?.gymSlug || "";
@@ -359,6 +379,10 @@ export default function Login({ embedded = false }) {
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+    if (authUnavailable) {
+      setErr(authUnavailableMessage);
+      return;
+    }
     if (accessBlocked) {
       setErr(accessBlockedMessage);
       return;
@@ -610,6 +634,22 @@ export default function Login({ embedded = false }) {
           </div>
         ) : null}
 
+        {authUnavailable ? (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid rgba(245, 158, 11, .35)",
+              background: "rgba(255, 247, 237, 1)",
+              color: "rgba(28,24,19,.9)",
+              fontSize: 13,
+            }}
+          >
+            {authUnavailableMessage}
+          </div>
+        ) : null}
+
         {authLoading ? (
           <Loading compact size={20} minHeight={80} />
         ) : (
@@ -695,7 +735,9 @@ export default function Login({ embedded = false }) {
 
             <button
               className="btn-primary"
-              disabled={busy || smsBusy || authLoading || slugLoading}
+              disabled={
+                busy || smsBusy || authLoading || slugLoading || authUnavailable
+              }
             >
               {usePhone
                 ? smsSent
@@ -717,7 +759,7 @@ export default function Login({ embedded = false }) {
               <button
                 type="button"
                 onClick={resetMode ? onCancelReset : onForgotPassword}
-                disabled={busy || authLoading}
+                disabled={busy || authLoading || authUnavailable}
                 style={{
                   background: "transparent",
                   border: "none",
